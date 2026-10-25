@@ -11,6 +11,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Docker Desktop on macOS may install its CLI outside PATH (e.g. ~/.docker/bin).
+for dir in "$HOME/.docker/bin" "$HOME/Applications/Docker.app/Contents/Resources/bin" \
+  "/Applications/Docker.app/Contents/Resources/bin"; do
+  [ -x "$dir/docker" ] && case ":$PATH:" in *":$dir:"*) ;; *) PATH="$dir:$PATH" ;; esac
+done
+export PATH
 ENV_FILE="$ROOT/.env"
 cd "$ROOT"
 
@@ -124,7 +131,8 @@ cmd_start() {
 
 cmd_backup() {
   need_docker
-  mkdir -p "$ROOT/backups"
+  mkdir -p "$ROOT/backups" && chmod 700 "$ROOT/backups"
+  umask 077
   local file; file="$ROOT/backups/ymva-$(date +%Y%m%d-%H%M%S).sql.gz"
   compose exec -T postgres pg_dump -U ymva -d ymva --clean --if-exists | gzip >"$file"
   bold "Backup saved: $file"

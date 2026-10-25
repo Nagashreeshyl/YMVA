@@ -39,6 +39,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        umask 077
         while true; do
           file=/backups/auto-$$(date +%Y%m%d-%H%M%S).sql.gz
           if pg_dump --clean --if-exists | gzip > "$$file.tmp"; then
