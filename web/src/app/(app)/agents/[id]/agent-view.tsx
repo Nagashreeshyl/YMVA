@@ -11,6 +11,7 @@ import { Button, ErrorNotice, Segmented, Skeleton } from "@/components/ui";
 import { api, type AgentDetail, type AgentOptions } from "@/lib/api";
 import { useMe } from "@/lib/session";
 import { CallPhone } from "./call-phone";
+import { Assistant } from "./assistant";
 import { AgentEditor, type SaveState } from "./editor";
 import { TestCall } from "./test-call";
 import { Versions } from "./versions";
@@ -282,16 +283,36 @@ export function AgentView() {
         />
       </div>
       {tab === "configure" && (
-        <AgentEditor
-          key={`${a.latest_version_id}:${revision}`}
-          agent={a}
-          options={options.data}
-          readOnly={!canEdit}
-          onSaveState={(state, error) => {
-            setSaveState(state);
-            setSaveError(error ?? null);
-          }}
-        />
+        <div
+          className={
+            canEdit && !archived
+              ? "grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start"
+              : undefined
+          }
+        >
+          <AgentEditor
+            key={`${a.latest_version_id}:${revision}`}
+            agent={a}
+            options={options.data}
+            readOnly={!canEdit}
+            onSaveState={(state, error) => {
+              setSaveState(state);
+              setSaveError(error ?? null);
+            }}
+          />
+          {canEdit && !archived && (
+            <div className="order-first xl:sticky xl:top-6 xl:order-last">
+              <Assistant
+                agent={a}
+                busy={busy}
+                onChanged={(updated) => {
+                  apply(updated);
+                  setRevision((r) => r + 1);
+                }}
+              />
+            </div>
+          )}
+        </div>
       )}
       {tab === "test" && canEdit && <TestCall agent={a} />}
       {tab === "call" && canEdit && <CallPhone agent={a} />}

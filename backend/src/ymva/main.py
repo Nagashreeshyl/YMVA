@@ -16,6 +16,7 @@ from ymva.api.routes import (
     agents,
     audit_logs,
     auth,
+    builder,
     calls,
     health,
     integrations,
@@ -115,6 +116,7 @@ def create_app() -> FastAPI:
         integrations,
         numbers,
         agents,
+        builder,
         calls,
         telephony,
     ):

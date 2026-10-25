@@ -1,4 +1,4 @@
-from ymva.models.agent import Agent, AgentStatus, AgentVersion
+from ymva.models.agent import Agent, AgentAssistantMessage, AgentStatus, AgentVersion
 from ymva.models.audit import AuditLog
 from ymva.models.base import Base
 from ymva.models.call import Call, CallDirection, CallEvent, CallEventType, CallStatus
@@ -11,6 +11,7 @@ __all__ = [
     "AICredential",
     "AIProvider",
     "Agent",
+    "AgentAssistantMessage",
     "AgentStatus",
     "AgentVersion",
     "ApiKey",

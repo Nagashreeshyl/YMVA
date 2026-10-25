@@ -202,6 +202,22 @@ export interface AgentDetail extends AgentSummary {
   }[];
 }
 
+export interface AssistantMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  /** What the assistant changed, in plain words; empty when it only answered. */
+  changes: string[];
+  can_undo: boolean;
+  undone: boolean;
+  created_at: string;
+}
+
+export interface AssistantTurn {
+  messages: AssistantMessage[];
+  agent: AgentDetail;
+}
+
 export interface AgentOptions {
   languages: { code: string; name: string; native: string }[];
   sarvam_voices: string[];

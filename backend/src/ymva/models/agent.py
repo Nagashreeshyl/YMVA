@@ -53,3 +53,24 @@ class AgentVersion(UUIDPk, Base):
         ForeignKey("users.id", ondelete="SET NULL")
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AgentAssistantMessage(UUIDPk, Base):
+    """One message in the chat between the admin and the AI builder about an agent."""
+
+    __tablename__ = "agent_assistant_messages"
+
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(16))  # "user" or "assistant"
+    content: Mapped[str] = mapped_column(Text)
+    # What the assistant changed, in plain words, and the draft before/after (for undo).
+    changes: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    config_before: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    config_after: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
