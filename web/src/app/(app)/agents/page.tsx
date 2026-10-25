@@ -6,7 +6,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AgentStatusBadge } from "@/components/agent-status";
-import { Button, EmptyState, ErrorNotice, Field, Input, PageHeader, Select, Skeleton } from "@/components/ui";
+import {
+  Button,
+  EmptyState,
+  ErrorNotice,
+  Field,
+  Input,
+  PageHeader,
+  Segmented,
+  Select,
+  Skeleton,
+} from "@/components/ui";
 import { api, type AgentDetail, type AgentOptions, type AgentSummary } from "@/lib/api";
 import { LANGUAGE_NAMES, relativeTime } from "@/lib/format";
 import { useMe } from "@/lib/session";
@@ -74,13 +84,17 @@ export default function AgentsPage() {
   const { data: me } = useMe();
   const canEdit = me?.role === "admin";
   const [creating, setCreating] = useState(false);
-  const agents = useQuery({ queryKey: ["agents"], queryFn: () => api<AgentSummary[]>("/agents") });
+  const [view, setView] = useState<"active" | "archived">("active");
+  const agents = useQuery({
+    queryKey: ["agents", view],
+    queryFn: () => api<AgentSummary[]>(view === "archived" ? "/agents?archived=true" : "/agents"),
+  });
 
   return (
     <>
       <PageHeader
         title="Agents"
-        description="Create, test and publish voice agents. Every change is saved as a new version."
+        description="Create, test and publish voice agents. Edits save automatically; you choose when to save a version."
         actions={
           canEdit && !creating ? (
             <Button onClick={() => setCreating(true)}>
@@ -90,11 +104,22 @@ export default function AgentsPage() {
         }
       />
       <div className="flex flex-col gap-6">
+        <Segmented
+          label="Which agents"
+          value={view}
+          onChange={setView}
+          options={[
+            { value: "active", label: "Agents" },
+            { value: "archived", label: "Archived" },
+          ]}
+        />
         {creating && <NewAgentForm onDone={() => setCreating(false)} />}
         {agents.isPending ? (
           <Skeleton className="h-40 rounded-xl" />
         ) : agents.isError ? (
           <ErrorNotice error={agents.error} onRetry={() => agents.refetch()} />
+        ) : agents.data.length === 0 && view === "archived" ? (
+          <p className="text-[13px] text-muted">No archived agents.</p>
         ) : agents.data.length === 0 ? (
           !creating && (
             <EmptyState

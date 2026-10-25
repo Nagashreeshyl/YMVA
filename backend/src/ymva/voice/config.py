@@ -96,9 +96,11 @@ class GeminiLiveSettings(BaseModel):
 
 
 class Atmosphere(BaseModel):
-    """Sounds mixed under the agent's voice so the call feels like a real office line."""
+    """Sounds mixed under the agent's voice, only where they make the call feel more human."""
 
-    room_tone: bool = True
+    # Constant office background. Off by default: on a quiet line it sounds unexplained.
+    room_tone: bool = False
+    # Soft typing only while the agent is actually working out a reply (or using a tool).
     typing_while_thinking: bool = True
     volume: float = Field(default=0.6, ge=0.0, le=1.0)
 
@@ -111,6 +113,9 @@ class CallLimits(BaseModel):
 
 class AgentConfig(BaseModel):
     mode: Literal["pipeline", "gemini_live"] = "pipeline"
+    # "everyday_mix": talk like people actually do (Kanglish, Tenglish, Hinglish).
+    # "pure": formal, single-language speech.
+    speaking_style: Literal["everyday_mix", "pure"] = "everyday_mix"
     system_prompt: str = Field(min_length=1, max_length=20000)
     # First thing the agent says, per language code. Supports {{variables}}.
     greetings: dict[str, str] = Field(default_factory=dict)
@@ -159,6 +164,21 @@ def render(template: str, variables: dict[str, str], missing: str | None = None)
         return missing if missing is not None else m.group(0)
 
     return VARIABLE_RE.sub(value, template)
+
+
+def detected_variables(config: "AgentConfig") -> list[str]:
+    """Every {{name}} used in the instructions, greetings or announcement, in order of use."""
+    texts = [
+        config.system_prompt,
+        *config.greetings.values(),
+        config.announcement.text,
+        *config.announcement.translations.values(),
+    ]
+    seen: dict[str, None] = {}
+    for text in texts:
+        for match in VARIABLE_RE.finditer(text):
+            seen.setdefault(match.group(1), None)
+    return list(seen)
 
 
 def missing_variables(template: str, variables: dict[str, str]) -> set[str]:

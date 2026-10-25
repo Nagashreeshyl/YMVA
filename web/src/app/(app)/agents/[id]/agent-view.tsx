@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowLeft, Check, Loader2 } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { AgentStatusBadge } from "@/components/agent-status";
 import { useConfirm } from "@/components/dialog";
@@ -42,6 +42,7 @@ export function AgentView() {
   const { data: me } = useMe();
   const canEdit = me?.role === "admin";
   const queryClient = useQueryClient();
+  const router = useRouter();
   const confirm = useConfirm();
   const [tab, setTab] = useState<Tab>("configure");
   const [saveState, setSaveState] = useState<SaveState>("saved");
@@ -75,8 +76,15 @@ export function AgentView() {
       setRevision((r) => r + 1);
     },
   });
+  const remove = useMutation({
+    mutationFn: () => api(`/agents/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+      router.push("/agents");
+    },
+  });
   const setStatus = useMutation({
-    mutationFn: (status: "active" | "paused") =>
+    mutationFn: (status: "draft" | "active" | "paused" | "archived") =>
       api<AgentDetail>(`/agents/${id}`, { method: "PATCH", json: { status } }),
     onSuccess: apply,
   });
@@ -94,6 +102,7 @@ export function AgentView() {
   }
   const a = agent.data;
   const busy = saveState === "pending" || saveState === "saving";
+  const archived = a.status === "archived";
   const summary =
     a.published_version === null
       ? "Not published yet"
@@ -122,8 +131,22 @@ export function AgentView() {
             {canEdit && tab === "configure" && <SaveIndicator state={saveState} error={saveError} />}
           </p>
         </div>
-        {canEdit && (
+        {canEdit && !archived && (
           <div className="flex flex-wrap gap-2">
+            <Button
+              variant="ghost"
+              loading={setStatus.isPending && setStatus.variables === "archived"}
+              onClick={async () => {
+                const { ok } = await confirm({
+                  title: `Archive ${a.name}?`,
+                  body: "It stops answering phone numbers and moves to Archived. You can restore it any time; its calls stay in history.",
+                  confirmLabel: "Archive",
+                });
+                if (ok) setStatus.mutate("archived");
+              }}
+            >
+              Archive
+            </Button>
             {a.status === "active" && (
               <Button
                 variant="ghost"
@@ -202,9 +225,43 @@ export function AgentView() {
           </div>
         )}
       </header>
-      {[publish, saveVersion, discard, setStatus].some((m) => m.isError) && (
+      {archived && canEdit && (
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-surface px-5 py-4">
+          <p>
+            <span className="font-medium">This agent is archived.</span>{" "}
+            <span className="text-muted">It can&apos;t take calls until you restore it.</span>
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="danger"
+              loading={remove.isPending}
+              onClick={async () => {
+                const { ok } = await confirm({
+                  title: `Delete ${a.name} permanently?`,
+                  body: "Its versions are deleted for good. Calls it made stay in history under its name. This can't be undone.",
+                  confirmLabel: "Delete permanently",
+                  tone: "danger",
+                });
+                if (ok) remove.mutate();
+              }}
+            >
+              Delete permanently
+            </Button>
+            <Button
+              variant="secondary"
+              loading={setStatus.isPending}
+              onClick={() => setStatus.mutate(a.published_version === null ? "draft" : "paused")}
+            >
+              Restore
+            </Button>
+          </div>
+        </div>
+      )}
+      {[publish, saveVersion, discard, setStatus, remove].some((m) => m.isError) && (
         <div className="mb-4">
-          <ErrorNotice error={publish.error ?? saveVersion.error ?? discard.error ?? setStatus.error} />
+          <ErrorNotice
+            error={publish.error ?? saveVersion.error ?? discard.error ?? setStatus.error ?? remove.error}
+          />
         </div>
       )}
       <div className="mb-6">

@@ -117,6 +117,7 @@ async def answer(
             )
         call = Call(
             agent_id=agent.id,
+            agent_name=agent.name,
             agent_version_id=version.id,
             direction=CallDirection.INBOUND,
             status=CallStatus.RINGING,
@@ -129,9 +130,7 @@ async def answer(
         db.add(call)
         await db.flush()
         keys = await load_ai_keys(db)
-        greeting.prefetch(
-            call.id, inbound_config, call.variables, keys.get("sarvam"), PIPELINE_SAMPLE_RATE
-        )
+        greeting.prefetch(call.id, inbound_config, call.variables, keys, PIPELINE_SAMPLE_RATE)
 
     if hook.provider_call_id:
         call.provider_call_id = hook.provider_call_id

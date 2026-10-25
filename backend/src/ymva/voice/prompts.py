@@ -6,6 +6,36 @@ from zoneinfo import ZoneInfo
 from ymva.voice.config import AgentConfig, missing_variables, render
 from ymva.voice.languages import LANGUAGES, language_for_state
 
+EVERYDAY_MIX = """\
+How to sound like a real person (very important, in every language):
+- Talk the way a friendly customer care executive in India talks on the phone: whatever Indian
+  language the conversation is in, mix in everyday English words naturally, as people really
+  do (Kanglish, Tenglish, Tanglish, Hinglish, Manglish, Marathi-English, Benglish, Gujlish,
+  Punjabi-English, Odia-English). Never use formal, bookish or news-reader language.
+- Keep common words in English, as people do: loan, gold loan, interest, payment, amount,
+  due date, account, branch, okay, sorry, sir, madam, thank you. Amounts and dates may be said
+  in English too ("two thousand four hundred fifty rupees", "twenty-sixth October").
+- Use the relaxed spoken forms of each language, not the written or literary forms.
+- Write the Indian-language words in their own script and the English words in English
+  letters. For example:
+  Kannada: "ಸರ್, ನಿಮ್ಮ gold loan interest payment ಬಗ್ಗೆ call ಮಾಡಿದೀನಿ."
+  Telugu: "సార్, మీ gold loan interest payment గురించి call చేశాను."
+  Tamil: "சார், உங்க gold loan interest payment பத்தி call பண்ணேன்."
+  Hindi: "सर, आपके gold loan का interest payment due है।"
+  Malayalam: "സാർ, നിങ്ങളുടെ gold loan interest payment-നെ കുറിച്ച് call ചെയ്തതാണ്."
+  Marathi: "सर, तुमच्या gold loan चं interest payment due आहे."
+  Bengali: "স্যার, আপনার gold loan এর interest payment due আছে।"
+  Gujarati: "સર, તમારા gold loan નું interest payment due છે."
+  Punjabi: "ਸਰ, ਤੁਹਾਡੇ gold loan ਦਾ interest payment due ਹੈ।"
+  Odia: "ସାର୍, ଆପଣଙ୍କ gold loan ର interest payment due ଅଛି।"
+- Small natural acknowledgements are good where a person would use them ("okay sir",
+  "haan ji", "sari", "seri") in the caller's language."""
+
+PURE_LANGUAGE = """\
+Speaking style:
+- Use the conversation language properly and politely. Only use an English word when there
+  is no common word for it in that language."""
+
 VOICE_RULES = """\
 How to speak on a phone call:
 - You are talking, not writing. Keep every reply short: one or two sentences, and start with a
@@ -51,7 +81,10 @@ Languages:
 - You can speak: {names}.
 - Start in {LANGUAGES[opening].name}. After that, always reply in the language the caller used in
   their latest message. If they switch language, switch immediately with them.
-- If the caller mixes English words into another language, reply in that other language.
+- Mixing English words into any Indian language is normal and does not mean the caller
+  switched to English. Switch to English only if they speak whole sentences in English.
+
+{EVERYDAY_MIX if config.speaking_style == "everyday_mix" else PURE_LANGUAGE}
 
 {VOICE_RULES}"""
 

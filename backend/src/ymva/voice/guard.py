@@ -27,6 +27,8 @@ from ymva.voice.languages import LANGUAGES, code_from_pipecat, detect_language
 SwitchCallback = Callable[[str | None, str], Awaitable[None]]
 
 MIN_LETTERS_TO_SWITCH = 4
+# "Hello", "okay sir" inside a Kannada call is normal code-mixing, not a language change.
+MIN_WORDS_TO_SWITCH = 3
 
 
 def language_note(code: str) -> str:
@@ -57,7 +59,10 @@ class LanguageGuard(FrameProcessor):
     def _language_of(self, frame: TranscriptionFrame) -> str | None:
         # A word or two ("I.", "ok") is too little to judge, and STT can mislabel such
         # fragments; switching on them would flip the conversation for no reason.
-        if sum(ch.isalpha() for ch in frame.text) < MIN_LETTERS_TO_SWITCH:
+        if (
+            sum(ch.isalpha() for ch in frame.text) < MIN_LETTERS_TO_SWITCH
+            or len(frame.text.split()) < MIN_WORDS_TO_SWITCH
+        ):
             return None
         # Trust the STT's detected language when it reports an allowed one; otherwise read
         # the script of the text itself (fast, and works for Gemini transcripts too).

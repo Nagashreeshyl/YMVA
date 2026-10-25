@@ -148,12 +148,14 @@ export interface AgentVariable {
 
 export interface AgentConfig {
   mode: "pipeline" | "gemini_live";
+  speaking_style: "everyday_mix" | "pure";
   system_prompt: string;
   greetings: Record<string, string>;
   default_language: string;
   languages: string[];
   state_languages: Record<string, string>;
   announcement: { enabled: boolean; text: string; translations: Record<string, string> };
+  /** Optional notes for {{names}} used in the text; values are given when calling. */
   variables: AgentVariable[];
   pipeline: {
     stt_provider: "sarvam";

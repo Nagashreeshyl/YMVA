@@ -33,10 +33,10 @@ def interest_reminder() -> AgentConfig:
         system_prompt=INTEREST_REMINDER_PROMPT,
         greetings={
             "en": "Hello! This is Priya from Yellow Metal. Am I speaking with {{customer_name}}?",
-            "kn": "ನಮಸ್ಕಾರ! ನಾನು ಯೆಲ್ಲೋ ಮೆಟಲ್‌ನಿಂದ ಪ್ರಿಯಾ ಮಾತನಾಡುತ್ತಿದ್ದೇನೆ. ನಾನು {{customer_name}} ಅವರ ಜೊತೆ ಮಾತನಾಡುತ್ತಿದ್ದೇನೆಯೇ?",
-            "te": "నమస్కారం! నేను ఎల్లో మెటల్ నుండి ప్రియ మాట్లాడుతున్నాను. నేను {{customer_name}} గారితో మాట్లాడుతున్నానా?",
-            "hi": "नमस्ते! मैं येलो मेटल से प्रिया बोल रही हूँ। क्या मेरी बात {{customer_name}} जी से हो रही है?",
-            "ta": "வணக்கம்! நான் யெல்லோ மெட்டலில் இருந்து பிரியா பேசுகிறேன். நான் {{customer_name}} அவர்களுடன் பேசுகிறேனா?",
+            "kn": "ನಮಸ್ಕಾರ! ನಾನು Yellow Metal ಇಂದ Priya ಮಾತಾಡ್ತಿದೀನಿ. {{customer_name}} ಅವರ ಜೊತೆ ಮಾತಾಡ್ತಿದೀನಾ?",
+            "te": "నమస్కారం! నేను Yellow Metal నుంచి Priya మాట్లాడుతున్నాను. {{customer_name}} గారేనా మాట్లాడేది?",
+            "hi": "नमस्ते! मैं Yellow Metal से Priya बोल रही हूँ। क्या मेरी बात {{customer_name}} जी से हो रही है?",
+            "ta": "வணக்கம்! நான் Yellow Metal-ல இருந்து Priya பேசறேன். {{customer_name}} அவங்க கிட்ட பேசறேனா?",
         },
         default_language="en",
         languages=["en", "kn", "te", "hi", "ta"],
@@ -72,4 +72,20 @@ def blank() -> AgentConfig:
 TEMPLATES = {
     "interest_reminder": ("Interest payment reminder", interest_reminder),
     "blank": ("Blank agent", blank),
+}
+
+
+# One short, natural line per language in the everyday mixed style the agents use.
+VOICE_PREVIEW_LINES = {
+    "en": "Hello! This is {name} from Yellow Metal. Your gold loan interest is due on the thirtieth. Is that okay?",
+    "kn": "ನಮಸ್ಕಾರ! ನಾನು Yellow Metal ಇಂದ {name} ಮಾತಾಡ್ತಿದೀನಿ. ನಿಮ್ಮ gold loan interest thirtieth ಗೆ due ಇದೆ, okay ನಾ?",
+    "te": "నమస్కారం! నేను Yellow Metal నుంచి {name} మాట్లాడుతున్నాను. మీ gold loan interest thirtieth కి due ఉంది, okay నా?",
+    "ta": "வணக்கம்! நான் Yellow Metal-ல இருந்து {name} பேசறேன். உங்க gold loan interest thirtieth-க்கு due இருக்கு, okay வா?",
+    "hi": "नमस्ते! मैं Yellow Metal से {name} बोल रही हूँ। आपका gold loan interest thirtieth को due है, okay?",
+    "ml": "നമസ്കാരം! ഞാൻ Yellow Metal-ൽ നിന്ന് {name} ആണ്. നിങ്ങളുടെ gold loan interest thirtieth-ന് due ആണ്, okay അല്ലേ?",
+    "mr": "नमस्कार! मी Yellow Metal मधून {name} बोलतेय. तुमचं gold loan interest thirtieth ला due आहे, okay ना?",
+    "bn": "নমস্কার! আমি Yellow Metal থেকে {name} বলছি। আপনার gold loan interest thirtieth এ due আছে, okay তো?",
+    "gu": "નમસ્તે! હું Yellow Metal માંથી {name} બોલું છું. તમારું gold loan interest thirtieth એ due છે, okay ને?",
+    "pa": "ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਮੈਂ Yellow Metal ਤੋਂ {name} ਬੋਲ ਰਹੀ ਹਾਂ। ਤੁਹਾਡਾ gold loan interest thirtieth ਨੂੰ due ਹੈ, okay?",
+    "od": "ନମସ୍କାର! ମୁଁ Yellow Metal ରୁ {name} କହୁଛି। ଆପଣଙ୍କ gold loan interest thirtieth ରେ due ଅଛି, okay ତ?",
 }

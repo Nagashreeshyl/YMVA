@@ -39,7 +39,7 @@ async def load_setup(
         keys = await load_ai_keys(db)
     variables = string_variables(call.variables)
     if not greeting.has(call_id):
-        greeting.prefetch(call_id, config, variables, keys.get("sarvam"), output_sample_rate)
+        greeting.prefetch(call_id, config, variables, keys, output_sample_rate)
     missing = sorted(required_providers(config) - keys.keys())
     if missing:
         raise MissingCredentialError(

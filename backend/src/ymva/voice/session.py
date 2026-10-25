@@ -33,6 +33,7 @@ from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.sarvam.stt import SarvamSTTService
 from pipecat.services.sarvam.tts import SarvamTTSService
+from pipecat.services.tts_service import TextAggregationMode
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
@@ -48,6 +49,7 @@ from ymva.voice.live_state import ConversationState
 from ymva.voice.prompts import opening_language, opening_lines, system_instruction
 from ymva.voice.recorder import CallRecorder, MetricsObserver
 from ymva.voice.recording import CallRecording
+from ymva.voice.trim import LeadingSilenceTrimmer
 from ymva.voice.turns import turn_stop_strategy
 
 log = get_logger(__name__)
@@ -99,6 +101,13 @@ def make_mixer(config: AgentConfig) -> AmbienceMixer | None:
 
 # How long the opening may wait for the prepared greeting before speaking it the normal way.
 GREETING_WAIT_SECS = 3.0
+# Gemini's voice takes 3-5 s to prepare a greeting, so Live calls may wait a little longer.
+LIVE_GREETING_WAIT_SECS = 3.5
+# After the goodbye, the caller must stay quiet this long before the agent hangs up.
+HANG_UP_GRACE_SECS = 1.5
+# Characters Sarvam collects before it starts speaking (default 50; 30 is its minimum), so the
+# voice starts after the model's first few words instead of a whole sentence later.
+TTS_START_CHARS = 30
 
 
 def required_providers(config: AgentConfig) -> set[str]:
@@ -122,6 +131,10 @@ class CallSession:
         self.recording = CallRecording(setup.call_id)
         self.task: PipelineTask | None = None
         self._ended_by: str = "caller_hung_up"
+        self._ending: asyncio.Task[None] | None = None
+        self.conversation = ConversationState(
+            setup.mixer, self._emit if setup.send_live_events else None
+        )
         self._idle_prompts = 0
 
     async def _warm_up_llm(self) -> None:
@@ -156,7 +169,6 @@ class CallSession:
 
     async def _end_call(self, params: FunctionCallParams) -> None:
         reason = str(params.arguments.get("reason") or "agent ended the call")
-        self._ended_by = "agent_ended"
         await self.recorder.event(
             CallEventType.TOOL_CALL,
             "end_call",
@@ -165,7 +177,27 @@ class CallSession:
         await params.result_callback(
             {"status": "ending call"}, properties=FunctionCallResultProperties(run_llm=False)
         )
-        await params.llm.push_frame(EndWorkerFrame(reason=reason))
+        if self._ending is None or self._ending.done():
+            self._ending = asyncio.create_task(self._hang_up_after_goodbye(reason))
+
+    async def _hang_up_after_goodbye(self, reason: str) -> None:
+        """Models sometimes call end_call too early. Let the agent finish speaking, then hang
+        up only if the caller stays quiet for a moment; if they start talking, keep going."""
+        assert self.task is not None
+        await asyncio.sleep(0.5)  # the goodbye may still be on its way to the speaker
+        for _ in range(300):  # up to 30 s of agent speech
+            if self.conversation.state != "agent_speaking":
+                break
+            await asyncio.sleep(0.1)
+        for _ in range(int(HANG_UP_GRACE_SECS * 10)):
+            if self.conversation.state == "user_speaking":
+                await self.recorder.event(
+                    CallEventType.STATUS, "Kept the call open: the caller was still talking"
+                )
+                return
+            await asyncio.sleep(0.1)
+        self._ended_by = "agent_ended"
+        await self.task.queue_frame(EndWorkerFrame(reason=reason))
 
     # ---- pipeline construction ---------------------------------------------------------
 
@@ -208,9 +240,11 @@ class CallSession:
                     vad=GeminiVADParams(silence_duration_ms=500),
                 ),
                 tools=tools,
+                # The opening is sent explicitly (prepared greeting, or a request to greet).
+                inference_on_context_initialization=False,
             )
             llm.register_function("end_call", self._end_call)
-            context = LLMContext(messages=[{"role": "user", "content": self._live_kickoff()}])
+            context = LLMContext(messages=[])
             pair = LLMContextAggregatorPair(context, user_params=user_params)
             guard = LanguageGuard(
                 allowed=config.languages, initial=self.opening, on_switch=on_switch, gemini_live=llm
@@ -229,7 +263,13 @@ class CallSession:
             return pipeline, context, GEMINI_OUTPUT_SAMPLE_RATE, guard, pair
 
         p = config.pipeline
-        stt = SarvamSTTService(api_key=self._key("sarvam"), sample_rate=PIPELINE_SAMPLE_RATE)
+        stt = SarvamSTTService(
+            api_key=self._key("sarvam"),
+            sample_rate=PIPELINE_SAMPLE_RATE,
+            # "codemix" keeps English words in English letters inside Kannada/Telugu/... text,
+            # the way people actually speak.
+            mode="codemix" if config.speaking_style == "everyday_mix" else "transcribe",
+        )
         # Main model plus a backup that takes over automatically if the main one fails.
         models = list(dict.fromkeys([p.llm_model, p.backup_llm_model]))
         llms: list[FrameProcessor] = [
@@ -258,11 +298,15 @@ class CallSession:
         tts = SarvamTTSService(
             api_key=self._key("sarvam"),
             sample_rate=self.setup.output_sample_rate,
+            # Stream the model's words to the voice as they arrive instead of waiting for a
+            # full sentence.
+            text_aggregation_mode=TextAggregationMode.TOKEN,
             settings=SarvamTTSService.Settings(
                 model="bulbul:v3",
                 voice=p.voice,
                 language=LANGUAGES[self.opening].pipecat,
                 pace=p.speaking_pace,
+                min_buffer_size=TTS_START_CHARS,
             ),
         )
         context = LLMContext(messages=[], tools=tools)
@@ -278,12 +322,42 @@ class CallSession:
                 pair.user(),
                 llm,
                 tts,
+                LeadingSilenceTrimmer(),
                 self.transport.output(),
                 self.recording.processor,
                 pair.assistant(),
             ]
         )
         return pipeline, context, self.setup.output_sample_rate, guard, pair
+
+    async def _open_live_mode(self, context: LLMContext) -> None:
+        assert self.task is not None
+        ready = await greeting.take(self.setup.call_id, wait_seconds=LIVE_GREETING_WAIT_SECS)
+        if ready is not None:
+            await self._play_prepared(ready, context)
+            # Gives Gemini the conversation so far (its own greeting) without a new reply.
+            await self.task.queue_frame(LLMRunFrame())
+            return
+        await self.task.queue_frame(LLMRunFrame())
+        await self.task.queue_frame(
+            LLMMessagesAppendFrame(
+                messages=[{"role": "user", "content": self._live_kickoff()}], run_llm=True
+            )
+        )
+
+    async def _play_prepared(self, ready: greeting.GreetingAudio, context: LLMContext) -> None:
+        assert self.task is not None
+        chunk = ready.sample_rate * 2 // 50  # 20 ms
+        await self.task.queue_frames(
+            [
+                TTSAudioRawFrame(
+                    audio=ready.pcm[i : i + chunk], sample_rate=ready.sample_rate, num_channels=1
+                )
+                for i in range(0, len(ready.pcm), chunk)
+            ]
+        )
+        context.add_message({"role": "assistant", "content": ready.text})
+        await self.recorder.event(CallEventType.AGENT_TURN, ready.text, language=ready.language)
 
     def _live_kickoff(self) -> str:
         announcement, greeting = opening_lines(
@@ -304,19 +378,7 @@ class CallSession:
         # Prepared in advance (while ringing / connecting): play it as soon as audio starts.
         ready = await greeting.take(self.setup.call_id, wait_seconds=GREETING_WAIT_SECS)
         if ready is not None:
-            chunk = ready.sample_rate * 2 // 50  # 20 ms
-            await self.task.queue_frames(
-                [
-                    TTSAudioRawFrame(
-                        audio=ready.pcm[i : i + chunk],
-                        sample_rate=ready.sample_rate,
-                        num_channels=1,
-                    )
-                    for i in range(0, len(ready.pcm), chunk)
-                ]
-            )
-            context.add_message({"role": "assistant", "content": ready.text})
-            await self.recorder.event(CallEventType.AGENT_TURN, ready.text, language=ready.language)
+            await self._play_prepared(ready, context)
             return
 
         announcement, greeting_text = opening_lines(
@@ -360,12 +422,7 @@ class CallSession:
                 enable_metrics=True,
                 enable_usage_metrics=True,
             ),
-            observers=[
-                self.metrics,
-                ConversationState(
-                    self.setup.mixer, self._emit if self.setup.send_live_events else None
-                ),
-            ],
+            observers=[self.metrics, self.conversation],
             idle_timeout_secs=config.limits.silence_timeout_seconds * 3 + 30,
             enable_rtvi=False,
         )
@@ -431,8 +488,8 @@ class CallSession:
             opening = asyncio.create_task(self._open_pipeline_mode(context))
             warm_up = asyncio.create_task(self._warm_up_llm())
         else:
-            # Sends the opening instructions to Gemini so it greets without waiting for the caller.
-            await task.queue_frame(LLMRunFrame())
+            # Gemini greets first: with the prepared greeting if ready, otherwise by itself.
+            opening = asyncio.create_task(self._open_live_mode(context))
 
         limit = asyncio.create_task(_limit())
         try:
@@ -443,7 +500,7 @@ class CallSession:
             log.exception("call pipeline failed", call_id=str(self.setup.call_id))
         finally:
             limit.cancel()
-            for background in (warm_up, opening):
+            for background in (warm_up, opening, self._ending):
                 if background is not None:
                     background.cancel()
             await self.recorder.event(

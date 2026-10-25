@@ -26,6 +26,10 @@ class ConversationState(BaseObserver):
         self._emit = emit
         self._state = "listening"
 
+    @property
+    def state(self) -> str:
+        return self._state
+
     async def _set(self, state: str) -> None:
         if self._mixer is not None:
             self._mixer.thinking = state == "thinking"

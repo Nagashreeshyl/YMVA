@@ -37,6 +37,8 @@ class Call(UUIDPk, Timestamps, Base):
     )
 
     agent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agents.id", ondelete="SET NULL"))
+    # Kept so call history still names the agent after it is deleted.
+    agent_name: Mapped[str | None] = mapped_column(String(120))
     agent_version_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("agent_versions.id", ondelete="SET NULL")
     )

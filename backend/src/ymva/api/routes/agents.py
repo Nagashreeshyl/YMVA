@@ -1,14 +1,18 @@
+import io
 import uuid
+import wave
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from ymva.api.deps import AdminUser, CurrentUser, DbSession, client_ip
-from ymva.models import Agent, AgentStatus, AgentVersion, User
+from ymva.models import Agent, AgentStatus, AgentVersion, Call, PhoneNumber, User
 from ymva.services import audit
+from ymva.services.integrations import load_ai_keys
+from ymva.voice import greeting
 from ymva.voice.config import (
     GEMINI_LIVE_MODELS,
     GEMINI_LIVE_VOICES,
@@ -17,7 +21,7 @@ from ymva.voice.config import (
     AgentConfig,
 )
 from ymva.voice.languages import LANGUAGES
-from ymva.voice.templates import TEMPLATES
+from ymva.voice.templates import TEMPLATES, VOICE_PREVIEW_LINES
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -63,7 +67,7 @@ class AgentCreateIn(BaseModel):
 class AgentPatchIn(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=2000)
-    status: Literal["active", "paused", "archived"] | None = None
+    status: Literal["draft", "active", "paused", "archived"] | None = None
 
 
 class DraftIn(BaseModel):
@@ -207,12 +211,11 @@ async def options(_: CurrentUser) -> dict[str, Any]:
 
 
 @router.get("", response_model=list[AgentSummary])
-async def list_agents(_: CurrentUser, db: DbSession) -> list[AgentSummary]:
-    agents = list(
-        await db.scalars(
-            select(Agent).where(Agent.status != AgentStatus.ARCHIVED).order_by(Agent.created_at)
-        )
+async def list_agents(_: CurrentUser, db: DbSession, archived: bool = False) -> list[AgentSummary]:
+    status_filter = (
+        Agent.status == AgentStatus.ARCHIVED if archived else Agent.status != AgentStatus.ARCHIVED
     )
+    agents = list(await db.scalars(select(Agent).where(status_filter).order_by(Agent.created_at)))
     if not agents:
         return []
     latest_numbers = (
@@ -277,6 +280,57 @@ async def create_agent(
     return await _detail(db, agent)
 
 
+class VoicePreviewIn(BaseModel):
+    engine: Literal["sarvam", "gemini"]
+    voice: str = Field(max_length=40)
+    language: str = Field(default="en", max_length=8)
+
+
+_preview_cache: dict[tuple[str, str, str], bytes] = {}
+
+
+@router.post("/voice-preview")
+async def voice_preview(body: VoicePreviewIn, _: AdminUser, db: DbSession) -> Response:
+    """A short sample of a voice, so you can choose by ear. Cached after the first play."""
+    voices = SARVAM_VOICES if body.engine == "sarvam" else GEMINI_LIVE_VOICES
+    if body.voice not in voices or body.language not in LANGUAGES:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown voice or language")
+    key = (body.engine, body.voice, body.language)
+    if key not in _preview_cache:
+        keys = await load_ai_keys(db)
+        provider = "sarvam" if body.engine == "sarvam" else "google"
+        if provider not in keys:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, f"Add the {provider} API key in Integrations first"
+            )
+        line = VOICE_PREVIEW_LINES.get(body.language, VOICE_PREVIEW_LINES["en"]).format(
+            name=body.voice.capitalize()
+        )
+        try:
+            if body.engine == "sarvam":
+                pcm, rate = await greeting.synthesize_sarvam(
+                    line, body.language, body.voice, 1.0, 24000, keys["sarvam"]
+                )
+            else:
+                pcm, rate = await greeting.synthesize_gemini(line, body.voice, keys["google"])
+        except Exception as exc:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, "The voice provider didn't return a sample. Try again."
+            ) from exc
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes(pcm)
+        _preview_cache[key] = buffer.getvalue()
+    return Response(
+        _preview_cache[key],
+        media_type="audio/wav",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
+
+
 @router.get("/{agent_id}", response_model=AgentDetail)
 async def get_agent(agent_id: uuid.UUID, _: CurrentUser, db: DbSession) -> AgentDetail:
     return await _detail(db, await _get_agent(db, agent_id))
@@ -310,6 +364,15 @@ async def update_agent(
         changes["description"] = "updated"
         agent.description = body.description
     if body.status is not None:
+        if body.status == "archived":
+            # Archived agents stop answering numbers.
+            await db.execute(
+                update(PhoneNumber)
+                .where(PhoneNumber.inbound_agent_id == agent.id)
+                .values(inbound_agent_id=None)
+            )
+        if body.status == "draft" and agent.published_version_id is not None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "A published agent can't be a draft")
         if body.status == "active" and agent.published_version_id is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Publish a version before activating")
         changes["status"] = [agent.status.value, body.status]
@@ -327,6 +390,31 @@ async def update_agent(
         )
     await db.commit()
     return await _detail(db, agent)
+
+
+@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent(
+    agent_id: uuid.UUID, request: Request, admin: AdminUser, db: DbSession
+) -> None:
+    """Delete an agent and its versions. Its calls stay in history under its name; numbers it
+    answered are left without an inbound agent."""
+    agent = await _get_agent(db, agent_id)
+    if agent.status != AgentStatus.ARCHIVED:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Archive the agent before deleting it")
+    await db.execute(update(Call).where(Call.agent_id == agent.id).values(agent_name=agent.name))
+    await audit.record(
+        db,
+        actor=admin,
+        action="agent.delete",
+        entity_type="agent",
+        entity_id=agent.id,
+        summary=f"Deleted agent '{agent.name}'",
+        ip_address=client_ip(request),
+    )
+    agent.published_version_id = None
+    await db.flush()
+    await db.delete(agent)
+    await db.commit()
 
 
 @router.put("/{agent_id}/draft", response_model=AgentDetail)

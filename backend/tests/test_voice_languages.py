@@ -107,15 +107,17 @@ async def test_guard_switches_language_before_the_turn_reaches_the_llm() -> None
         guard,
         frames_to_send=[
             TranscriptionFrame("Hello, yes speaking", "user", "t1", language=Language.EN_IN),
-            TranscriptionFrame("ನಾನು ನಾಳೆ ಪಾವತಿಸುತ್ತೇನೆ", "user", "t2"),
-            TranscriptionFrame("ಸರಿ", "user", "t3", language=Language.KN_IN),
+            TranscriptionFrame("ನಾನು ನಾಳೆ ಪಾವತಿ ಮಾಡ್ತೀನಿ", "user", "t2"),
+            TranscriptionFrame("ಸರಿ ಸರಿ ಆಯ್ತು", "user", "t3", language=Language.KN_IN),
+            TranscriptionFrame("Hello sir.", "user", "t3a", language=Language.EN_IN),  # code-mixing
             TranscriptionFrame("I.", "user", "t3b", language=Language.EN_IN),  # too short to switch
-            TranscriptionFrame("నేను రేపు చెల్లిస్తాను", "user", "t4", language=Language.TE_IN),
+            TranscriptionFrame("నేను రేపు డబ్బు కడతాను", "user", "t4", language=Language.TE_IN),
         ],
         expected_down_frames=[
             TranscriptionFrame,
             LLMMessagesAppendFrame,
             TTSUpdateSettingsFrame,
+            TranscriptionFrame,
             TranscriptionFrame,
             TranscriptionFrame,
             TranscriptionFrame,
@@ -140,7 +142,7 @@ async def test_guard_ignores_languages_the_agent_does_not_speak() -> None:
     guard = LanguageGuard(allowed=["en", "kn"], initial="en", on_switch=on_switch)
     await run_test(
         guard,
-        frames_to_send=[TranscriptionFrame("నేను రేపు చెల్లిస్తాను", "user", "t1")],
+        frames_to_send=[TranscriptionFrame("నేను రేపు డబ్బు కడతాను", "user", "t1")],
         expected_down_frames=[TranscriptionFrame],
     )
     assert guard.current == "en"
@@ -171,3 +173,47 @@ async def test_live_mode_does_not_read_romanised_indic_as_english() -> None:
         expected_down_frames=[TranscriptionFrame],
     )
     assert guard.current == "kn"
+
+
+async def test_leading_silence_is_trimmed() -> None:
+    import numpy as np
+    from pipecat.frames.frames import TTSAudioRawFrame, TTSStartedFrame
+
+    from ymva.voice.trim import LeadingSilenceTrimmer
+
+    rate = 16000
+    silence = np.zeros(rate // 50, dtype=np.int16).tobytes()  # 20 ms
+    speech = (np.ones(rate // 50, dtype=np.int16) * 4000).tobytes()
+    down, _ = await run_test(
+        LeadingSilenceTrimmer(),
+        frames_to_send=[
+            TTSStartedFrame(),
+            *[TTSAudioRawFrame(audio=silence, sample_rate=rate, num_channels=1) for _ in range(15)],
+            TTSAudioRawFrame(
+                audio=silence[: len(silence) // 2] + speech[: len(speech) // 2],
+                sample_rate=rate,
+                num_channels=1,
+            ),
+            TTSAudioRawFrame(
+                audio=silence, sample_rate=rate, num_channels=1
+            ),  # pause inside speech is kept
+        ],
+    )
+    audio = [f for f in down if isinstance(f, TTSAudioRawFrame)]
+    assert len(audio) == 2  # 300 ms of leading silence dropped
+    assert audio[1].audio == silence
+
+
+def test_everyday_mix_covers_every_language() -> None:
+    from ymva.voice.languages import LANGUAGES
+    from ymva.voice.prompts import EVERYDAY_MIX
+    from ymva.voice.templates import VOICE_PREVIEW_LINES
+
+    for info in LANGUAGES.values():
+        assert info.code in VOICE_PREVIEW_LINES, info.name
+        if info.code != "en":
+            assert f"{info.name}:" in EVERYDAY_MIX, info.name
+    config = interest_reminder()
+    assert "Kanglish" in system_instruction(config, {}, "kn", "Asia/Kolkata")
+    config.speaking_style = "pure"
+    assert "Kanglish" not in system_instruction(config, {}, "kn", "Asia/Kolkata")

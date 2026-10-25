@@ -110,7 +110,8 @@ def _call_out(call: Call, agent_names: dict[uuid.UUID, str]) -> dict[str, Any]:
         "direction": call.direction,
         "status": call.status,
         "agent_id": call.agent_id,
-        "agent_name": agent_names.get(call.agent_id) if call.agent_id else None,
+        "agent_name": (agent_names.get(call.agent_id) if call.agent_id else None)
+        or call.agent_name,
         "from_number": call.from_number,
         "to_number": call.to_number,
         "started_at": call.started_at,
@@ -229,6 +230,7 @@ async def place_outbound(
 
     call = Call(
         agent_id=agent.id,
+        agent_name=agent.name,
         agent_version_id=version.id,
         direction=CallDirection.OUTBOUND,
         status=CallStatus.QUEUED,
@@ -258,7 +260,7 @@ async def place_outbound(
     call.provider_call_id = placed.provider_call_id
     # Prepare the greeting audio while the phone rings, so it plays the moment they answer.
     keys = await load_ai_keys(db)
-    greeting.prefetch(call.id, config, call.variables, keys.get("sarvam"), PHONE_SAMPLE_RATE)
+    greeting.prefetch(call.id, config, call.variables, keys, PHONE_SAMPLE_RATE)
     await audit.record(
         db,
         actor=admin,
@@ -344,6 +346,7 @@ async def browser_call(
             return
         call = Call(
             agent_id=agent.id,
+            agent_name=agent.name,
             agent_version_id=version.id,
             direction=CallDirection.WEB,
             status=CallStatus.IN_PROGRESS,

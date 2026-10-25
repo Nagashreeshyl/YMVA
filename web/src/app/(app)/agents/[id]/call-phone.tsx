@@ -5,13 +5,14 @@ import Link from "next/link";
 import { useState } from "react";
 import { Button, ErrorNotice, Field, Input, Panel, Select } from "@/components/ui";
 import { api, type AgentDetail, type CallSummary, type PhoneNumber } from "@/lib/api";
+import { CallDetailsFields } from "@/components/call-details-fields";
+import { callDetails, rememberValues, rememberedValues } from "@/lib/variables";
 
 export function CallPhone({ agent }: { agent: AgentDetail }) {
   const queryClient = useQueryClient();
   const numbers = useQuery({ queryKey: ["numbers"], queryFn: () => api<PhoneNumber[]>("/numbers") });
-  const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(agent.config.variables.map((v) => [v.name, ""])),
-  );
+  const details = callDetails(agent.config);
+  const [values, setValues] = useState<Record<string, string>>(() => rememberedValues(agent.id));
   const place = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
       api<CallSummary>("/calls/outbound", { method: "POST", json: body }),
@@ -52,11 +53,12 @@ export function CallPhone({ agent }: { agent: AgentDetail }) {
         onSubmit={(e) => {
           e.preventDefault();
           const f = new FormData(e.currentTarget);
+          rememberValues(agent.id, values);
           place.mutate({
             agent_id: agent.id,
             from_number_id: f.get("from"),
             to: f.get("to"),
-            variables: values,
+            variables: Object.fromEntries(details.map((n) => [n, values[n] ?? ""])),
           });
         }}
       >
@@ -75,18 +77,7 @@ export function CallPhone({ agent }: { agent: AgentDetail }) {
         <Field label="Phone number to call" hint="With country code, e.g. +91 98765 43210">
           {(p) => <Input {...p} name="to" required inputMode="tel" />}
         </Field>
-        {agent.config.variables.map((v) => (
-          <Field key={v.name} label={v.name} hint={v.description}>
-            {(p) => (
-              <Input
-                {...p}
-                value={values[v.name] ?? ""}
-                placeholder={v.example}
-                onChange={(e) => setValues((x) => ({ ...x, [v.name]: e.target.value }))}
-              />
-            )}
-          </Field>
-        ))}
+        <CallDetailsFields config={agent.config} values={values} onChange={setValues} />
         {place.isError && (
           <div className="sm:col-span-2">
             <ErrorNotice error={place.error} />

@@ -1,9 +1,10 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Button, Field, Input, Panel, Segmented, Select, Switch, Textarea } from "@/components/ui";
+import { Field, Input, Panel, Segmented, Select, Switch, Textarea } from "@/components/ui";
+import { VoicePicker } from "@/components/voice-picker";
+import { detectVariables, variableLabel } from "@/lib/variables";
 import { api, type AgentConfig, type AgentDetail, type AgentOptions } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
@@ -28,6 +29,10 @@ export function AgentEditor({
   const [draft, setDraft] = useState<AgentConfig>(() => structuredClone(agent.config));
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const languageName = (code: string) => options.languages.find((l) => l.code === code)?.name ?? code;
+  const detected = detectVariables(draft);
+  const [previewChoice, setPreviewLanguage] = useState<string | null>(null);
+  const previewLanguage =
+    previewChoice && draft.languages.includes(previewChoice) ? previewChoice : draft.default_language;
 
   const save = useMutation({
     mutationFn: (config: AgentConfig) =>
@@ -84,35 +89,77 @@ export function AgentEditor({
     <fieldset disabled={readOnly} className="flex min-w-0 flex-col gap-6">
       <Panel
         title="How it talks"
-description="Standard (recommended) uses Sarvam to hear and speak Indian languages and Gemini to think: replies in about 1.3 s in our tests. Gemini Live does everything in one model but was slower (2–8 s) and misheard Kannada in testing."
+        description="Standard uses Sarvam to hear and speak Indian languages and Gemini to think. Gemini Live does everything in one model with very natural voices. Both replied in about 1.3 s in our latest tests; Gemini Live sometimes mishears Kannada, so test both with your customers."
       >
-        <div className="flex flex-col gap-5">
-          <Segmented
-            label="Voice engine"
-            value={draft.mode}
-            onChange={(mode) => update((d) => void (d.mode = mode))}
-            options={[
-              { value: "pipeline", label: "Standard (Sarvam + Gemini)" },
-              { value: "gemini_live", label: "Gemini Live" },
-            ]}
-          />
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <Segmented
+              label="Voice engine"
+              value={draft.mode}
+              onChange={(mode) => update((d) => void (d.mode = mode))}
+              options={[
+                { value: "pipeline", label: "Standard (Sarvam + Gemini)" },
+                { value: "gemini_live", label: "Gemini Live" },
+              ]}
+            />
+            <Segmented
+              label="Speaking style"
+              value={draft.speaking_style}
+              onChange={(style) => update((d) => void (d.speaking_style = style))}
+              options={[
+                { value: "everyday_mix", label: "Everyday mix (Kanglish, Tenglish…)" },
+                { value: "pure", label: "Pure language" },
+              ]}
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-[13px]">
+            <span className="text-muted">Preview in</span>
+            {draft.languages.map((code) => (
+              <button
+                key={code}
+                type="button"
+                aria-pressed={previewLanguage === code}
+                onClick={() => setPreviewLanguage(code)}
+                className={
+                  previewLanguage === code
+                    ? "h-7 rounded-full bg-ink px-3 text-on-ink"
+                    : "h-7 rounded-full px-3 text-muted hover:bg-surface hover:text-ink"
+                }
+              >
+                {languageName(code)}
+              </button>
+            ))}
+          </div>
+          <Field
+            label="Voice"
+            hint={`Press play to hear each voice speak ${languageName(previewLanguage)} the way this agent would.`}
+          >
+            {() =>
+              draft.mode === "pipeline" ? (
+                <VoicePicker
+                  engine="sarvam"
+                  voices={options.sarvam_voices}
+                  value={draft.pipeline.voice}
+                  language={previewLanguage}
+                  disabled={readOnly}
+                  onChange={(v) => update((d) => void (d.pipeline.voice = v))}
+                />
+              ) : (
+                <VoicePicker
+                  engine="gemini"
+                  voices={options.gemini_live_voices}
+                  value={draft.gemini_live.voice}
+                  language={previewLanguage}
+                  disabled={readOnly}
+                  onChange={(v) => update((d) => void (d.gemini_live.voice = v))}
+                />
+              )
+            }
+          </Field>
+
           {draft.mode === "pipeline" ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <Field label="Voice">
-                {(p) => (
-                  <Select
-                    {...p}
-                    value={draft.pipeline.voice}
-                    onChange={(e) => update((d) => void (d.pipeline.voice = e.target.value))}
-                  >
-                    {options.sarvam_voices.map((v) => (
-                      <option key={v} value={v}>
-                        {v.charAt(0).toUpperCase() + v.slice(1)}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              </Field>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Field label="Conversation model">
                 {(p) => (
                   <Select
@@ -128,7 +175,7 @@ description="Standard (recommended) uses Sarvam to hear and speak Indian languag
                   </Select>
                 )}
               </Field>
-              <Field label="Backup model" hint="Takes over automatically if the main model fails.">
+              <Field label="Backup model" hint="Takes over if the main model fails.">
                 {(p) => (
                   <Select
                     {...p}
@@ -177,21 +224,6 @@ description="Standard (recommended) uses Sarvam to hear and speak Indian languag
             </div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Voice">
-                {(p) => (
-                  <Select
-                    {...p}
-                    value={draft.gemini_live.voice}
-                    onChange={(e) => update((d) => void (d.gemini_live.voice = e.target.value))}
-                  >
-                    {options.gemini_live_voices.map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              </Field>
               <Field label="Gemini Live model">
                 {(p) => (
                   <Select
@@ -205,6 +237,23 @@ description="Standard (recommended) uses Sarvam to hear and speak Indian languag
                       </option>
                     ))}
                   </Select>
+                )}
+              </Field>
+              <Field
+                label={`Creativity · ${draft.gemini_live.temperature.toFixed(1)}`}
+                hint="Lower is more predictable; higher sounds livelier."
+              >
+                {(p) => (
+                  <input
+                    {...p}
+                    type="range"
+                    min={0}
+                    max={1.5}
+                    step={0.1}
+                    value={draft.gemini_live.temperature}
+                    onChange={(e) => update((d) => void (d.gemini_live.temperature = Number(e.target.value)))}
+                    className="h-10 accent-[var(--ink)]"
+                  />
                 )}
               </Field>
             </div>
@@ -351,86 +400,46 @@ description="Standard (recommended) uses Sarvam to hear and speak Indian languag
 
       <Panel
         title="Customer details"
-        description="Values supplied for each call (from a campaign, your CRM or the call form) and usable as {{name}} in instructions and greetings."
-        actions={
-          !readOnly && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => update((d) => void d.variables.push({ name: "", description: "", example: "" }))}
-            >
-              <Plus className="size-4" aria-hidden /> Add detail
-            </Button>
-          )
-        }
+        description="Write {{name}} anywhere in the instructions or greetings, e.g. {{customer_name}} or {{due_amount}}. Each one becomes a field you fill in when placing a call, or that a campaign fills from your sheet."
       >
-        {draft.variables.length === 0 ? (
-          <p className="text-[13px] text-muted">No customer details defined.</p>
+        {detected.length === 0 ? (
+          <p className="text-[13px] text-muted">
+            No customer details used yet. Add one by typing it in double braces, like {"{{customer_name}}"}.
+          </p>
         ) : (
-          <div className="flex flex-col gap-3">
-            {draft.variables.map((v, i) => (
-              <div key={i} className="grid gap-3 sm:grid-cols-[1fr_1.4fr_1fr_auto] sm:items-end">
-                <Field label="Name">
-                  {(p) => (
-                    <Input
-                      {...p}
-                      value={v.name}
-                      placeholder="customer_name"
-                      pattern="[a-zA-Z_][a-zA-Z0-9_]*"
-                      className="font-mono text-[13px]"
-                      onChange={(e) =>
-                        update((d) => void (d.variables[i].name = e.target.value.replace(/\s+/g, "_")))
-                      }
-                    />
-                  )}
-                </Field>
-                <Field label="What it is">
-                  {(p) => (
-                    <Input
-                      {...p}
-                      value={v.description}
-                      onChange={(e) => update((d) => void (d.variables[i].description = e.target.value))}
-                    />
-                  )}
-                </Field>
-                <Field label="Example">
-                  {(p) => (
-                    <Input
-                      {...p}
-                      value={v.example}
-                      onChange={(e) => update((d) => void (d.variables[i].example = e.target.value))}
-                    />
-                  )}
-                </Field>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-label={`Remove ${v.name || "detail"}`}
-                  className="mb-1"
-                  onClick={() => update((d) => void d.variables.splice(i, 1))}
-                >
-                  <Trash2 className="size-4" aria-hidden />
-                </Button>
-              </div>
+          <ul className="flex flex-col gap-3">
+            {detected.map((name) => (
+              <li key={name} className="grid gap-2 sm:grid-cols-[220px_1fr] sm:items-center">
+                <code className="w-fit rounded-lg bg-surface px-2.5 py-1.5 font-mono text-[13px]">{`{{${name}}}`}</code>
+                <Input
+                  aria-label={`Note for ${name}`}
+                  placeholder={`What is ${variableLabel(name).toLowerCase()}? (optional, shown on the call form)`}
+                  value={draft.variables.find((v) => v.name === name)?.description ?? ""}
+                  onChange={(e) =>
+                    update((d) => {
+                      const existing = d.variables.find((v) => v.name === name);
+                      if (existing) existing.description = e.target.value;
+                      else d.variables.push({ name, description: e.target.value, example: "" });
+                    })
+                  }
+                />
+              </li>
             ))}
-          </div>
+          </ul>
         )}
       </Panel>
 
-      <Panel
-        title="Call atmosphere"
-        description="Soft sounds under the agent's voice so the line never sounds dead or robotic."
-      >
+      <Panel title="Call atmosphere" description="Sounds are added only where a real call would have them.">
         <div className="flex max-w-xl flex-col gap-4">
           <Switch
             label="Office background"
-            description="A quiet room tone for the whole call, like a real office line."
+            description="A quiet office room tone under the whole call. Off by default; turn on for a busier call-centre feel."
             checked={draft.atmosphere.room_tone}
             onChange={(on) => update((d) => void (d.atmosphere.room_tone = on))}
           />
           <Switch
             label="Typing while thinking"
-            description="Soft keyboard sounds in the moment between the caller finishing and the agent replying."
+            description="Soft keyboard sounds only when the agent takes a moment to reply, so the caller knows someone is there."
             checked={draft.atmosphere.typing_while_thinking}
             onChange={(on) => update((d) => void (d.atmosphere.typing_while_thinking = on))}
           />

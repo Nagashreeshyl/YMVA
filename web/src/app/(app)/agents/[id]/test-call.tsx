@@ -4,8 +4,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Mic, PhoneOff } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { Badge, Button, ErrorNotice, Field, Input, Panel, Select } from "@/components/ui";
+import { Badge, Button, ErrorNotice, Field, Panel, Select } from "@/components/ui";
 import type { AgentDetail } from "@/lib/api";
+import { CallDetailsFields } from "@/components/call-details-fields";
+import { callDetails, rememberValues, rememberedValues } from "@/lib/variables";
 import { startBrowserCall, type LiveEvent } from "@/lib/browser-call";
 import { LANGUAGE_NAMES } from "@/lib/format";
 
@@ -18,6 +20,11 @@ type Line = {
 };
 type Conversation = "listening" | "user_speaking" | "thinking" | "agent_speaking";
 
+/** Wall-clock seconds, for timing how fast the agent replies. */
+function clockSeconds(): number {
+  return performance.now() / 1000;
+}
+
 const CONVERSATION_LABEL: Record<Conversation, string> = {
   listening: "Listening",
   user_speaking: "You're speaking",
@@ -28,9 +35,8 @@ const CONVERSATION_LABEL: Record<Conversation, string> = {
 export function TestCall({ agent }: { agent: AgentDetail }) {
   const queryClient = useQueryClient();
   const [versionId, setVersionId] = useState<string>(""); // "" = current edits
-  const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(agent.config.variables.map((v) => [v.name, v.example])),
-  );
+  const details = callDetails(agent.config);
+  const [values, setValues] = useState<Record<string, string>>(() => rememberedValues(agent.id));
   const [state, setState] = useState<"idle" | "connecting" | "live" | "ended">("idle");
   const [error, setError] = useState<string | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
@@ -70,9 +76,9 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
         break;
       case "state":
         setConversation(event.state);
-        if (event.state === "thinking") thinkingSince.current = performance.now();
+        if (event.state === "thinking") thinkingSince.current = clockSeconds() * 1000;
         if (event.state === "agent_speaking" && thinkingSince.current !== null) {
-          lastReply.current = (performance.now() - thinkingSince.current) / 1000;
+          lastReply.current = (clockSeconds() * 1000 - thinkingSince.current) / 1000;
           thinkingSince.current = null;
         }
         break;
@@ -110,19 +116,25 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
     setPartial("");
     setConversation("listening");
     setState("connecting");
+    rememberValues(agent.id, values);
     try {
-      session.current = await startBrowserCall(agent.id, versionId || null, values, {
-        onEvent,
-        onLevel: setLevel,
-        onAgentSpeaking: () => {},
-        onClose: (reason) => {
-          if (reason) setError(reason);
-          setState("ended");
-          setPartial("");
-          setLevel(0);
-          queryClient.invalidateQueries({ queryKey: ["calls"] });
+      session.current = await startBrowserCall(
+        agent.id,
+        versionId || null,
+        Object.fromEntries(details.map((n) => [n, values[n] ?? ""])),
+        {
+          onEvent,
+          onLevel: setLevel,
+          onAgentSpeaking: () => {},
+          onClose: (reason) => {
+            if (reason) setError(reason);
+            setState("ended");
+            setPartial("");
+            setLevel(0);
+            queryClient.invalidateQueries({ queryKey: ["calls"] });
+          },
         },
-      });
+      );
     } catch (err) {
       setState("idle");
       setError(
@@ -153,21 +165,12 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
               </Select>
             )}
           </Field>
-          {agent.config.variables.length === 0 && (
-            <p className="text-[13px] text-muted">This agent has no customer details.</p>
+          {details.length === 0 && (
+            <p className="text-[13px] text-muted">
+              This agent doesn&apos;t use any {"{{customer details}}"}.
+            </p>
           )}
-          {agent.config.variables.map((v) => (
-            <Field key={v.name} label={v.name} hint={v.description}>
-              {(p) => (
-                <Input
-                  {...p}
-                  value={values[v.name] ?? ""}
-                  disabled={live}
-                  onChange={(e) => setValues((x) => ({ ...x, [v.name]: e.target.value }))}
-                />
-              )}
-            </Field>
-          ))}
+          <CallDetailsFields config={agent.config} values={values} onChange={setValues} disabled={live} />
         </div>
       </Panel>
 

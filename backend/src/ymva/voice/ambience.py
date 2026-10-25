@@ -14,6 +14,7 @@ from pipecat.frames.frames import MixerControlFrame, MixerEnableFrame, MixerUpda
 _LOOP_SECONDS = 12
 _ROOM_TONE_RMS = 90.0  # int16 units at volume 1.0 (about -51 dBFS): present, never in the way
 _KEY_PEAK = 1400.0  # int16 peak of one keystroke at volume 1.0
+TYPING_DELAY_SECS = 0.4
 
 
 @lru_cache(maxsize=4)
@@ -61,6 +62,7 @@ class AmbienceMixer(BaseAudioMixer):
         self._next_key_in = 0  # samples until the next keystroke
         self._keys_left = 0  # keystrokes left in the current burst
         self._pending: np.ndarray = np.zeros(0, dtype=np.float32)  # unfinished keystroke tail
+        self._thinking_for = 0  # samples since the agent started thinking
 
     async def start(self, sample_rate: int) -> None:
         self._sample_rate = sample_rate
@@ -95,6 +97,11 @@ class AmbienceMixer(BaseAudioMixer):
             self._pending = self._pending[take:]
         if not (self._typing_on and self.thinking):
             self._keys_left = 0
+            self._thinking_for = 0
+            return out
+        # Only type when the pause is long enough to notice; quick replies stay clean.
+        self._thinking_for += n
+        if self._thinking_for < TYPING_DELAY_SECS * self._sample_rate:
             return out
         i = 0
         while i < n:

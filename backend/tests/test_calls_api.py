@@ -322,3 +322,49 @@ async def test_retired_models_are_upgraded(admin_client: httpx.AsyncClient) -> N
         await admin_client.put(f"/api/agents/{agent['id']}/draft", json={"config": config})
     ).json()
     assert draft["config"]["pipeline"]["llm_model"] == "gemini-3.5-flash-lite"
+
+
+async def test_archive_then_delete_keeps_call_history(admin_client: httpx.AsyncClient) -> None:
+    data = await _setup(admin_client)
+    aid = data["agent"]["id"]
+    call = (
+        await admin_client.post(
+            "/api/calls/outbound",
+            json={"agent_id": aid, "from_number_id": data["number"]["id"], "to": "+919876543210"},
+        )
+    ).json()
+    assert (await admin_client.delete(f"/api/agents/{aid}")).status_code == 400  # archive first
+
+    await admin_client.patch(f"/api/agents/{aid}", json={"status": "archived"})
+    assert (await admin_client.get("/api/agents")).json() == []
+    assert [a["id"] for a in (await admin_client.get("/api/agents?archived=true")).json()] == [aid]
+    number = (await admin_client.get("/api/numbers")).json()[0]
+    assert number["inbound_agent_id"] is None  # archived agents stop answering
+
+    assert (await admin_client.delete(f"/api/agents/{aid}")).status_code == 204
+    assert (await admin_client.get(f"/api/agents/{aid}")).status_code == 404
+    kept = (await admin_client.get(f"/api/calls/{call['id']}")).json()
+    assert kept["agent_name"] == "Interest reminder"
+
+
+async def test_voice_preview_is_cached(
+    admin_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await admin_client.put("/api/integrations/ai/sarvam", json={"api_key": "sk-sarvam-12345678"})
+    calls: list[str] = []
+
+    async def fake_sarvam(
+        text: str, language: str, voice: str, pace: float, rate: int, key: str
+    ) -> tuple[bytes, int]:
+        calls.append(text)
+        return b"\x00\x00" * 2400, 24000
+
+    monkeypatch.setattr(greeting, "synthesize_sarvam", fake_sarvam)
+    body = {"engine": "sarvam", "voice": "kavya", "language": "kn"}
+    first = await admin_client.post("/api/agents/voice-preview", json=body)
+    second = await admin_client.post("/api/agents/voice-preview", json=body)
+    assert first.status_code == 200 and first.headers["content-type"] == "audio/wav"
+    assert first.content[:4] == b"RIFF" and second.content == first.content
+    assert len(calls) == 1 and "Kavya" in calls[0]
+    bad = await admin_client.post("/api/agents/voice-preview", json={**body, "voice": "nobody"})
+    assert bad.status_code == 422
