@@ -44,6 +44,7 @@ from ymva.models import CallEventType, CallStatus
 from ymva.voice import greeting
 from ymva.voice.ambience import AmbienceMixer
 from ymva.voice.config import AgentConfig
+from ymva.voice.gemini_live import ResilientGeminiLive
 from ymva.voice.guard import LanguageGuard
 from ymva.voice.languages import LANGUAGES
 from ymva.voice.live_state import ConversationState
@@ -247,8 +248,11 @@ class CallSession:
 
         if config.mode == "gemini_live":
             live = config.gemini_live
-            llm: Any = GeminiLiveLLMService(
+            llm: Any = ResilientGeminiLive(
                 api_key=self._key("google"),
+                was_replying=lambda: (
+                    self.conversation.state in ("thinking", "using_tool", "agent_speaking")
+                ),
                 settings=GeminiLiveLLMService.Settings(
                     model=live.model,
                     voice=live.voice,
