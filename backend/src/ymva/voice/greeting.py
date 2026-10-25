@@ -24,8 +24,14 @@ log = get_logger(__name__)
 
 _TTL_SECONDS = 600
 _SARVAM_TTS_URL = "https://api.sarvam.ai/text-to-speech"
-# Speaks with the same named voices as Gemini Live, so a prepared greeting matches the call.
-_GEMINI_TTS_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-lite-tts:generateContent"
+# Speak with the same named voices as Gemini Live, so a prepared greeting matches the call.
+# Tried in order: each has its own quota, and the fastest one runs out first on small plans.
+_GEMINI_TTS_MODELS = (
+    "gemini-3.8-flash-lite-tts",
+    "gemini-3.1-flash-tts-preview",
+    "gemini-2.5-flash-preview-tts",
+)
+_GEMINI_TTS_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
 @dataclass
@@ -74,18 +80,23 @@ async def synthesize_sarvam(
 
 
 async def synthesize_gemini(text: str, voice: str, api_key: str) -> tuple[bytes, int]:
+    body = {
+        "contents": [{"parts": [{"text": text}]}],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
+        },
+    }
     async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=3.0)) as client:
-        response = await client.post(
-            _GEMINI_TTS_URL,
-            headers={"x-goog-api-key": api_key},
-            json={
-                "contents": [{"parts": [{"text": text}]}],
-                "generationConfig": {
-                    "responseModalities": ["AUDIO"],
-                    "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
-                },
-            },
-        )
+        for model in _GEMINI_TTS_MODELS:
+            response = await client.post(
+                _GEMINI_TTS_URL.format(model=model),
+                headers={"x-goog-api-key": api_key},
+                json=body,
+            )
+            # Out of quota or overloaded: the next model may still have room.
+            if response.status_code not in (429, 500, 503):
+                break
     response.raise_for_status()
     part = response.json()["candidates"][0]["content"]["parts"][0]["inlineData"]
     data = base64.b64decode(part["data"])

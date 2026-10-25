@@ -1,5 +1,5 @@
-"""Tracks who is talking, drives the typing sound while the agent thinks, and (for browser tests)
-streams the conversation state and live transcript to the dashboard."""
+"""Tracks who is talking, drives the typing sound while the agent uses a tool, and (for browser
+tests) streams the conversation state and live transcript to the dashboard."""
 
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -7,6 +7,8 @@ from typing import Any
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
+    FunctionCallInProgressFrame,
+    FunctionCallResultFrame,
     InterimTranscriptionFrame,
     TranscriptionFrame,
     UserStartedSpeakingFrame,
@@ -18,6 +20,9 @@ from ymva.voice.ambience import AmbienceMixer
 
 Emit = Callable[[dict[str, Any]], Awaitable[None]]
 
+# Ending the call is not "work" the caller should hear.
+_SILENT_TOOLS = {"end_call"}
+
 
 class ConversationState(BaseObserver):
     def __init__(self, mixer: AmbienceMixer | None, emit: Emit | None) -> None:
@@ -25,6 +30,8 @@ class ConversationState(BaseObserver):
         self._mixer = mixer
         self._emit = emit
         self._state = "listening"
+        # Whether the agent has started speaking since the caller's last turn.
+        self.agent_replied = False
 
     @property
     def state(self) -> str:
@@ -32,7 +39,7 @@ class ConversationState(BaseObserver):
 
     async def _set(self, state: str) -> None:
         if self._mixer is not None:
-            self._mixer.thinking = state == "thinking"
+            self._mixer.thinking = state == "using_tool"
         if state != self._state:
             self._state = state
             if self._emit:
@@ -45,8 +52,16 @@ class ConversationState(BaseObserver):
         if isinstance(frame, UserStartedSpeakingFrame):
             await self._set("user_speaking")
         elif isinstance(frame, UserStoppedSpeakingFrame):
+            self.agent_replied = False
             await self._set("thinking")
+        elif isinstance(frame, FunctionCallInProgressFrame):
+            if frame.function_name not in _SILENT_TOOLS:
+                await self._set("using_tool")
+        elif isinstance(frame, FunctionCallResultFrame):
+            if self._state == "using_tool":
+                await self._set("thinking")
         elif isinstance(frame, BotStartedSpeakingFrame):
+            self.agent_replied = True
             await self._set("agent_speaking")
         elif isinstance(frame, BotStoppedSpeakingFrame):
             if self._state == "agent_speaking":

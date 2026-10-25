@@ -1,5 +1,5 @@
-"""Call atmosphere: soft room tone under the whole call, and quiet keyboard typing while the
-agent is working out its reply, so the line never sounds dead.
+"""Call atmosphere: soft room tone under the whole call, and faint keyboard typing while the
+agent is using a tool (looking up or saving details), so a pause sounds like someone working.
 
 Both sounds are generated (no audio files), mixed only into the agent's outgoing audio, and
 kept far below speech level.
@@ -13,8 +13,8 @@ from pipecat.frames.frames import MixerControlFrame, MixerEnableFrame, MixerUpda
 
 _LOOP_SECONDS = 12
 _ROOM_TONE_RMS = 90.0  # int16 units at volume 1.0 (about -51 dBFS): present, never in the way
-_KEY_PEAK = 1400.0  # int16 peak of one keystroke at volume 1.0
-TYPING_DELAY_SECS = 0.4
+_KEY_PEAK = 450.0  # int16 peak of one keystroke at volume 1.0 (faint, well under speech)
+TYPING_DELAY_SECS = 0.3
 
 
 @lru_cache(maxsize=4)

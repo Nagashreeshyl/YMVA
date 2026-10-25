@@ -438,8 +438,8 @@ export function AgentEditor({
             onChange={(on) => update((d) => void (d.atmosphere.room_tone = on))}
           />
           <Switch
-            label="Typing while thinking"
-            description="Soft keyboard sounds only when the agent takes a moment to reply, so the caller knows someone is there."
+            label="Typing while using a tool"
+            description="Faint keyboard sounds only while the agent looks up or saves details, so the pause sounds like someone working."
             checked={draft.atmosphere.typing_while_thinking}
             onChange={(on) => update((d) => void (d.atmosphere.typing_while_thinking = on))}
           />

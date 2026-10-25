@@ -16,21 +16,27 @@ GEMINI_LIVE_VOICES = ("Aoede", "Kore", "Leda", "Zephyr", "Puck", "Charon", "Fenr
 
 # Checked against Google's API on 25 Oct 2026: older models (e.g. gemini-2.5-flash) are closed
 # to new accounts. Fastest first.
+# Only models whose thinking can be switched off: a voice agent must answer straight away.
 LLM_MODELS = (
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
     "gemini-3.6-flash",
-    "gemini-3.8-flash",
 )
-GEMINI_LIVE_MODELS = ("models/gemini-3.8-live", "models/gemini-2.5-flash-native-audio-latest")
-# Older Live previews answered in 3-18 s in tests; gemini-3.8-live in about 2.5 s.
+# Measured from the caller going quiet to the agent's first sound (thinking off):
+# gemini-3.8-live 0.7-0.9 s, gemini-3.1-flash-live-preview 0.7-1.1 s, 2.5 native audio 3-5 s.
+GEMINI_LIVE_MODELS = ("models/gemini-3.8-live", "models/gemini-3.1-flash-live-preview")
 RETIRED_LIVE_MODELS = {
+    "models/gemini-2.5-flash-native-audio-latest": "models/gemini-3.8-live",
     "models/gemini-2.5-flash-native-audio-preview-12-2025": "models/gemini-3.8-live",
     "models/gemini-2.5-flash-native-audio-preview-09-2025": "models/gemini-3.8-live",
+    # Always reasons before speaking; far too slow for a phone call.
+    "models/gemini-3.8-live-extended-thinking": "models/gemini-3.8-live",
 }
 RETIRED_LLM_MODELS = {
     "gemini-2.5-flash": "gemini-3.5-flash-lite",
     "gemini-2.5-flash-lite": "gemini-3.5-flash-lite",
+    # Can't run with thinking off (its lowest level is "low").
+    "gemini-3.8-flash": "gemini-3.5-flash-lite",
 }
 
 VARIABLE_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
@@ -100,7 +106,7 @@ class Atmosphere(BaseModel):
 
     # Constant office background. Off by default: on a quiet line it sounds unexplained.
     room_tone: bool = False
-    # Soft typing only while the agent is actually working out a reply (or using a tool).
+    # Faint typing only while the agent is using a tool (looking something up, saving).
     typing_while_thinking: bool = True
     volume: float = Field(default=0.6, ge=0.0, le=1.0)
 

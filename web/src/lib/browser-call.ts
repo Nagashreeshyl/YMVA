@@ -4,7 +4,7 @@ export type LiveEvent =
   | { type: "call"; call_id: string; version: number | null }
   | { type: "error"; content: string }
   | { type: "clear" }
-  | { type: "state"; state: "listening" | "user_speaking" | "thinking" | "agent_speaking" }
+  | { type: "state"; state: "listening" | "user_speaking" | "thinking" | "using_tool" | "agent_speaking" }
   | { type: "partial"; content: string; final: boolean }
   | {
       type: "user_turn" | "agent_turn" | "language_switch" | "status" | "tool_call";

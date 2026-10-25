@@ -5,6 +5,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from google.genai.types import ThinkingConfig
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -46,7 +47,7 @@ from ymva.voice.config import AgentConfig
 from ymva.voice.guard import LanguageGuard
 from ymva.voice.languages import LANGUAGES
 from ymva.voice.live_state import ConversationState
-from ymva.voice.prompts import opening_language, opening_lines, system_instruction
+from ymva.voice.prompts import GOODBYES, opening_language, opening_lines, system_instruction
 from ymva.voice.recorder import CallRecorder, MetricsObserver
 from ymva.voice.recording import CallRecording
 from ymva.voice.trim import LeadingSilenceTrimmer
@@ -101,13 +102,23 @@ def make_mixer(config: AgentConfig) -> AmbienceMixer | None:
 
 # How long the opening may wait for the prepared greeting before speaking it the normal way.
 GREETING_WAIT_SECS = 3.0
-# Gemini's voice takes 3-5 s to prepare a greeting, so Live calls may wait a little longer.
-LIVE_GREETING_WAIT_SECS = 3.5
+# Gemini Live greets by itself in about a second, so waiting longer for the prepared audio
+# would only add silence.
+LIVE_GREETING_WAIT_SECS = 1.0
 # After the goodbye, the caller must stay quiet this long before the agent hangs up.
 HANG_UP_GRACE_SECS = 1.5
 # Characters Sarvam collects before it starts speaking (default 50; 30 is its minimum), so the
 # voice starts after the model's first few words instead of a whole sentence later.
 TTS_START_CHARS = 30
+LLM_RETRY_AFTER_SECS = 2.0
+LLM_GIVE_UP_AFTER_SECS = 5.0
+
+
+def no_thinking(model: str) -> Any:
+    """Thinking switched off (Gemini 3 models: their "minimal" level, which skips it)."""
+    if model.startswith("gemini-2"):
+        return GoogleLLMService.ThinkingConfig(thinking_budget=0, include_thoughts=False)
+    return GoogleLLMService.ThinkingConfig(thinking_level="minimal", include_thoughts=False)
 
 
 def required_providers(config: AgentConfig) -> set[str]:
@@ -136,6 +147,8 @@ class CallSession:
             setup.mixer, self._emit if setup.send_live_events else None
         )
         self._idle_prompts = 0
+        self._live_llm: Any = None
+        self._guard: LanguageGuard | None = None
 
     async def _warm_up_llm(self) -> None:
         """Open the connection to the model while the greeting plays, so the first reply
@@ -184,7 +197,15 @@ class CallSession:
         """Models sometimes call end_call too early. Let the agent finish speaking, then hang
         up only if the caller stays quiet for a moment; if they start talking, keep going."""
         assert self.task is not None
-        await asyncio.sleep(0.5)  # the goodbye may still be on its way to the speaker
+        await asyncio.sleep(1.0)  # the goodbye may still be on its way to the speaker
+        if (
+            not self.conversation.agent_replied
+            and self.setup.config.mode == "pipeline"
+            and self._guard is not None
+        ):
+            # The model hung up without a word; never drop the caller in silence.
+            await self.task.queue_frame(TTSSpeakFrame(GOODBYES[self._guard.current]))
+            await asyncio.sleep(1.0)
         for _ in range(300):  # up to 30 s of agent speech
             if self.conversation.state != "agent_speaking":
                 break
@@ -238,12 +259,16 @@ class CallSession:
                     language=None,  # type: ignore[arg-type]
                     # Reply after half a second of silence instead of Gemini's longer default.
                     vad=GeminiVADParams(silence_duration_ms=500),
+                    # No reasoning before speaking: replies start about 0.2 s sooner. (Adding
+                    # include_thoughts=False here stops Gemini answering the caller at all.)
+                    thinking=ThinkingConfig(thinking_budget=0),
                 ),
                 tools=tools,
-                # The opening is sent explicitly (prepared greeting, or a request to greet).
+                # The opening decides whether Gemini speaks first (see _open_live_mode).
                 inference_on_context_initialization=False,
             )
             llm.register_function("end_call", self._end_call)
+            self._live_llm = llm
             context = LLMContext(messages=[])
             pair = LLMContextAggregatorPair(context, user_params=user_params)
             guard = LanguageGuard(
@@ -276,8 +301,17 @@ class CallSession:
             GoogleLLMService(
                 api_key=self._key("google"),
                 settings=GoogleLLMService.Settings(
-                    model=model, temperature=p.temperature, system_instruction=instruction
+                    model=model,
+                    temperature=p.temperature,
+                    system_instruction=instruction,
+                    thinking=no_thinking(model),
                 ),
+                # Google occasionally takes 5-15 s to start an answer it normally starts in
+                # under a second. Ask again after 2 s; if that stalls too, the error hands the
+                # turn to the backup model.
+                retry_on_timeout=True,
+                retry_timeout_secs=LLM_RETRY_AFTER_SECS,
+                stream_idle_timeout_secs=LLM_GIVE_UP_AFTER_SECS,
             )
             for model in models
         ]
@@ -338,12 +372,11 @@ class CallSession:
             # Gives Gemini the conversation so far (its own greeting) without a new reply.
             await self.task.queue_frame(LLMRunFrame())
             return
+        # Gemini Live only reacts to the context it starts with; messages added afterwards are
+        # ignored. So the request to greet goes into the first context, with a reply asked for.
+        context.add_message({"role": "user", "content": self._live_kickoff()})
+        self._live_llm._inference_on_context_initialization = True
         await self.task.queue_frame(LLMRunFrame())
-        await self.task.queue_frame(
-            LLMMessagesAppendFrame(
-                messages=[{"role": "user", "content": self._live_kickoff()}], run_llm=True
-            )
-        )
 
     async def _play_prepared(self, ready: greeting.GreetingAudio, context: LLMContext) -> None:
         assert self.task is not None
@@ -407,6 +440,7 @@ class CallSession:
         status, error = CallStatus.COMPLETED, None
         try:
             pipeline, context, out_rate, guard, pair = self._build()
+            self._guard = guard
         except MissingCredentialError as exc:
             await self.recorder.event(CallEventType.ERROR, str(exc))
             await self.recorder.finish(

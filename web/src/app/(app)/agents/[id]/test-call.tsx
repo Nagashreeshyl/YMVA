@@ -18,7 +18,7 @@ type Line = {
   language: string | null;
   replySeconds?: number;
 };
-type Conversation = "listening" | "user_speaking" | "thinking" | "agent_speaking";
+type Conversation = "listening" | "user_speaking" | "thinking" | "using_tool" | "agent_speaking";
 
 /** Wall-clock seconds, for timing how fast the agent replies. */
 function clockSeconds(): number {
@@ -28,7 +28,8 @@ function clockSeconds(): number {
 const CONVERSATION_LABEL: Record<Conversation, string> = {
   listening: "Listening",
   user_speaking: "You're speaking",
-  thinking: "Thinking…",
+  thinking: "Replying…",
+  using_tool: "Checking details…",
   agent_speaking: "Agent speaking",
 };
 
@@ -76,7 +77,9 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
         break;
       case "state":
         setConversation(event.state);
-        if (event.state === "thinking") thinkingSince.current = clockSeconds() * 1000;
+        if (event.state === "thinking" && thinkingSince.current === null) {
+          thinkingSince.current = clockSeconds() * 1000;
+        }
         if (event.state === "agent_speaking" && thinkingSince.current !== null) {
           lastReply.current = (clockSeconds() * 1000 - thinkingSince.current) / 1000;
           thinkingSince.current = null;
@@ -212,7 +215,7 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
                   </span>
                 </span>
                 <span
-                  className={`text-[13px] ${conversation === "thinking" ? "text-ink" : "text-muted"}`}
+                  className={`text-[13px] ${conversation === "thinking" || conversation === "using_tool" ? "text-ink" : "text-muted"}`}
                   aria-live="polite"
                 >
                   {CONVERSATION_LABEL[conversation]}

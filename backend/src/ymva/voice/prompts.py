@@ -103,3 +103,19 @@ def opening_lines(
     if not greeting or missing_variables(greeting, variables):
         return announcement, None
     return announcement, render(greeting, variables).strip() or None
+
+
+# Said when the model hangs up without a goodbye of its own (it sometimes calls end_call alone).
+GOODBYES: dict[str, str] = {
+    "en": "Thank you, have a nice day. Bye!",
+    "hi": "ठीक है, thank you. आपका दिन अच्छा हो, bye!",
+    "kn": "ಸರಿ, thank you. ನಿಮ್ಮ ದಿನ ಚೆನ್ನಾಗಿರಲಿ, bye!",
+    "te": "సరే, thank you. మీ రోజు బాగుండాలి, bye!",
+    "ta": "சரி, thank you. உங்க நாள் நல்லா இருக்கட்டும், bye!",
+    "ml": "ശരി, thank you. നല്ലൊരു ദിവസം ആശംസിക്കുന്നു, bye!",
+    "mr": "ठीक आहे, thank you. तुमचा दिवस छान जावो, bye!",
+    "bn": "ঠিক আছে, thank you. আপনার দিন ভালো কাটুক, bye!",
+    "gu": "સારું, thank you. તમારો દિવસ સારો જાય, bye!",
+    "pa": "ਠੀਕ ਹੈ, thank you. ਤੁਹਾਡਾ ਦਿਨ ਵਧੀਆ ਰਹੇ, bye!",
+    "od": "ଠିକ୍ ଅଛି, thank you. ଆପଣଙ୍କ ଦିନ ଭଲ ରହୁ, bye!",
+}
