@@ -1,7 +1,7 @@
 "use client";
 
 export type LiveEvent =
-  | { type: "call"; call_id: string; version: number }
+  | { type: "call"; call_id: string; version: number | null }
   | { type: "error"; content: string }
   | { type: "clear" }
   | {
@@ -29,13 +29,24 @@ function wsUrl(path: string): string {
 /** Microphone + speaker session with an agent over a WebSocket. Call stop() to hang up. */
 export async function startBrowserCall(
   agentId: string,
+  versionId: string | null,
   variables: Record<string, string>,
   handlers: BrowserCallHandlers,
 ): Promise<{ stop: () => void }> {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
-  });
-  const context = new AudioContext();
+  // Create and resume the audio context first, while we're still inside the click: browsers
+  // keep audio created later (e.g. after the microphone permission prompt) muted.
+  const context = new AudioContext({ latencyHint: "interactive" });
+  const resumed = context.resume();
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+    });
+  } catch (err) {
+    void context.close();
+    throw err;
+  }
+  await resumed;
   await context.audioWorklet.addModule("/audio-worklets.js");
   const mic = new AudioWorkletNode(context, "mic-capture");
   const player = new AudioWorkletNode(context, "pcm-player");
@@ -43,6 +54,7 @@ export async function startBrowserCall(
   player.connect(context.destination);
 
   const params = new URLSearchParams({ agent_id: agentId });
+  if (versionId) params.set("version_id", versionId);
   for (const [k, v] of Object.entries(variables)) if (v) params.set(`var_${k}`, v);
   const ws = new WebSocket(wsUrl(`/api/calls/web?${params}`));
   ws.binaryType = "arraybuffer";

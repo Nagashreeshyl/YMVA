@@ -17,7 +17,9 @@ from ymva.voice.session import CallSession, CallSetup, MissingCredentialError, r
 log = get_logger(__name__)
 
 
-async def load_setup(call_id: uuid.UUID, *, live_events: bool = False) -> CallSetup:
+async def load_setup(
+    call_id: uuid.UUID, *, live_events: bool = False, output_sample_rate: int = 16000
+) -> CallSetup:
     async with get_sessionmaker()() as db:
         call = await db.get(Call, call_id)
         if call is None or call.agent_version_id is None:
@@ -26,7 +28,7 @@ async def load_setup(call_id: uuid.UUID, *, live_events: bool = False) -> CallSe
         agent = await db.get(Agent, call.agent_id) if call.agent_id else None
         if version is None or agent is None:
             raise CallSetupError("The agent for this call no longer exists")
-        config = AgentConfig.model_validate(version.config)
+        config = AgentConfig.model_validate(call.agent_config or version.config)
         keys = await load_ai_keys(db)
     missing = sorted(required_providers(config) - keys.keys())
     if missing:
@@ -40,6 +42,7 @@ async def load_setup(call_id: uuid.UUID, *, live_events: bool = False) -> CallSe
         keys=keys,
         send_live_events=live_events,
         provider_call_id=call.provider_call_id,
+        output_sample_rate=output_sample_rate,
     )
 
 

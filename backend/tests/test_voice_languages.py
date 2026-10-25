@@ -142,3 +142,15 @@ async def test_guard_ignores_languages_the_agent_does_not_speak() -> None:
         expected_down_frames=[TranscriptionFrame],
     )
     assert guard.current == "en"
+
+
+def test_missing_details_are_never_left_for_the_model_to_guess() -> None:
+    config = interest_reminder()
+    text = system_instruction(config, {"customer_name": "Ramesh"}, "en", "Asia/Kolkata")
+    assert "{{due_amount}}" not in text and "[not provided] rupees" in text
+    assert "Never invent amounts" in text
+    # Greeting needs customer_name: without it, the model greets instead of reading a gap.
+    _, greeting = opening_lines(config, {}, "en")
+    assert greeting is None
+    _, greeting = opening_lines(config, {"customer_name": "Asha"}, "en")
+    assert greeting is not None and "Asha" in greeting

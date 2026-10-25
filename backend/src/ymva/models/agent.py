@@ -31,6 +31,9 @@ class Agent(UUIDPk, Timestamps, Base):
     created_by_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
+    # Work in progress from the editor. Versions are only created when the admin asks.
+    draft_config: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    draft_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AgentVersion(UUIDPk, Base):

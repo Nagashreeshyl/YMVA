@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
+import { DialogProvider } from "@/components/dialog";
 import { ApiError } from "@/lib/api";
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -17,5 +18,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
         },
       }),
   );
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={client}>
+      <DialogProvider>{children}</DialogProvider>
+    </QueryClientProvider>
+  );
 }

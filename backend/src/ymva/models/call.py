@@ -62,6 +62,8 @@ class Call(UUIDPk, Timestamps, Base):
 
     languages: Mapped[list[str]] = mapped_column(JSONB, default=list)
     variables: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # Exact agent configuration used, when it wasn't a saved version (browser tests of a draft).
+    agent_config: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     outcome: Mapped[str | None] = mapped_column(String(64), index=True)
     summary: Mapped[str | None] = mapped_column(Text)
     extracted: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)

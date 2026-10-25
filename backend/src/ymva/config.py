@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     # Public HTTPS address telephony providers use to reach webhooks and media streams.
     # Defaults to PUBLIC_URL; set separately when calls come in through a tunnel.
     telephony_public_url: str = ""
+    # Where call recordings (WAV) are stored.
+    recordings_dir: str = "data/recordings"
     # Safety cap on simultaneous calls handled by this server.
     max_concurrent_calls: int = 20
     session_ttl_hours: int = 12

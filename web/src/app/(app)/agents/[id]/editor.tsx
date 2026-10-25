@@ -2,58 +2,70 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
-import {
-  Button,
-  ErrorNotice,
-  Field,
-  Input,
-  Panel,
-  Segmented,
-  Select,
-  Switch,
-  Textarea,
-} from "@/components/ui";
+import { useEffect, useRef, useState } from "react";
+import { Button, Field, Input, Panel, Segmented, Select, Switch, Textarea } from "@/components/ui";
 import { api, type AgentConfig, type AgentDetail, type AgentOptions } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
 type Updater = (draft: AgentConfig) => void;
+export type SaveState = "saved" | "pending" | "saving" | "error";
 
-function useDraft(config: AgentConfig) {
-  const [draft, setDraft] = useState<AgentConfig>(() => structuredClone(config));
-  const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(config), [draft, config]);
-  const update = (fn: Updater) =>
-    setDraft((current) => {
-      const next = structuredClone(current);
-      fn(next);
-      return next;
-    });
-  return { draft, update, dirty, reset: () => setDraft(structuredClone(config)) };
-}
+const AUTOSAVE_DELAY_MS = 700;
 
 export function AgentEditor({
   agent,
   options,
   readOnly,
+  onSaveState,
 }: {
   agent: AgentDetail;
   options: AgentOptions;
   readOnly: boolean;
+  onSaveState: (state: SaveState, error?: string) => void;
 }) {
   const queryClient = useQueryClient();
-  const { draft, update, dirty, reset } = useDraft(agent.config);
-  const [note, setNote] = useState("");
+  // The editor owns its copy; it is re-created (via `key`) when the draft is replaced from outside.
+  const [draft, setDraft] = useState<AgentConfig>(() => structuredClone(agent.config));
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const languageName = (code: string) => options.languages.find((l) => l.code === code)?.name ?? code;
 
   const save = useMutation({
-    mutationFn: () =>
-      api<AgentDetail>(`/agents/${agent.id}/versions`, { method: "POST", json: { config: draft, note } }),
+    mutationFn: (config: AgentConfig) =>
+      api<AgentDetail>(`/agents/${agent.id}/draft`, { method: "PUT", json: { config } }),
+    onMutate: () => onSaveState("saving"),
     onSuccess: (updated) => {
       queryClient.setQueryData(["agent", agent.id], updated);
       queryClient.invalidateQueries({ queryKey: ["agents"] });
-      setNote("");
+      onSaveState("saved");
     },
+    onError: (error) => onSaveState("error", error instanceof Error ? error.message : "Couldn't save"),
   });
+
+  // Leaving the editor (e.g. switching tabs) saves any change still waiting for the timer.
+  const pending = useRef<AgentConfig | null>(null);
+  const { mutate } = save; // stable across renders
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+      if (pending.current) mutate(pending.current);
+    },
+    [mutate],
+  );
+
+  // Every change is saved as the draft shortly after you stop typing. No version is created.
+  const update = (fn: Updater) =>
+    setDraft((current) => {
+      const next = structuredClone(current);
+      fn(next);
+      if (timer.current) clearTimeout(timer.current);
+      onSaveState("pending");
+      pending.current = next;
+      timer.current = setTimeout(() => {
+        pending.current = null;
+        save.mutate(next);
+      }, AUTOSAVE_DELAY_MS);
+      return next;
+    });
 
   const toggleLanguage = (code: string) =>
     update((d) => {
@@ -69,7 +81,7 @@ export function AgentEditor({
     });
 
   return (
-    <fieldset disabled={readOnly} className="flex min-w-0 flex-col gap-6 pb-24">
+    <fieldset disabled={readOnly} className="flex min-w-0 flex-col gap-6">
       <Panel
         title="How it talks"
         description="Standard uses Sarvam for listening and speaking Indian languages, and Gemini to think. Gemini Live does all three in one model."
@@ -85,7 +97,7 @@ export function AgentEditor({
             ]}
           />
           {draft.mode === "pipeline" ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <Field label="Voice">
                 {(p) => (
                   <Select
@@ -109,6 +121,21 @@ export function AgentEditor({
                     onChange={(e) => update((d) => void (d.pipeline.llm_model = e.target.value))}
                   >
                     {[...new Set([draft.pipeline.llm_model, ...options.llm_models])].map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+              <Field label="Backup model" hint="Takes over automatically if the main model fails.">
+                {(p) => (
+                  <Select
+                    {...p}
+                    value={draft.pipeline.backup_llm_model}
+                    onChange={(e) => update((d) => void (d.pipeline.backup_llm_model = e.target.value))}
+                  >
+                    {[...new Set([draft.pipeline.backup_llm_model, ...options.llm_models])].map((m) => (
                       <option key={m} value={m}>
                         {m}
                       </option>
@@ -165,13 +192,19 @@ export function AgentEditor({
                   </Select>
                 )}
               </Field>
-              <Field label="Gemini Live model" hint="Use the exact model name from Google AI Studio.">
+              <Field label="Gemini Live model">
                 {(p) => (
-                  <Input
+                  <Select
                     {...p}
                     value={draft.gemini_live.model}
                     onChange={(e) => update((d) => void (d.gemini_live.model = e.target.value))}
-                  />
+                  >
+                    {[...new Set([draft.gemini_live.model, ...options.gemini_live_models])].map((m) => (
+                      <option key={m} value={m}>
+                        {m.replace("models/", "")}
+                      </option>
+                    ))}
+                  </Select>
                 )}
               </Field>
             </div>
@@ -418,35 +451,6 @@ export function AgentEditor({
           </Field>
         </div>
       </Panel>
-
-      {!readOnly && dirty && (
-        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-paper/95 backdrop-blur lg:left-[248px]">
-          <div className="mx-auto flex max-w-[1200px] flex-wrap items-center gap-3 px-4 py-3 sm:px-8">
-            <span className="flex items-center gap-2 text-[13px] font-medium">
-              <span className="size-2 rounded-full bg-gold" aria-hidden /> Unsaved changes
-            </span>
-            <Input
-              aria-label="What changed"
-              placeholder="What changed? (optional)"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              className="h-9 min-w-48 flex-1"
-              maxLength={500}
-            />
-            <Button variant="ghost" onClick={reset} disabled={save.isPending}>
-              Discard
-            </Button>
-            <Button onClick={() => save.mutate()} loading={save.isPending}>
-              Save as v{agent.latest_version + 1}
-            </Button>
-            {save.isError && (
-              <div className="w-full">
-                <ErrorNotice error={save.error} />
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </fieldset>
   );
 }

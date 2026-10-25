@@ -149,8 +149,10 @@ async def test_browser_serializer_roundtrip() -> None:
     assert isinstance(frame, InputAudioRawFrame)
     assert frame.sample_rate == 16000 and frame.audio == pcm
     assert await serializer.deserialize("text is ignored") is None
+    # Agent audio goes to the browser at 24 kHz for full voice quality.
+    pcm24 = b"\x01\x00" * 480
     out = await serializer.serialize(
-        OutputAudioRawFrame(audio=pcm, sample_rate=16000, num_channels=1)
+        OutputAudioRawFrame(audio=pcm24, sample_rate=24000, num_channels=1)
     )
-    assert out == pcm
+    assert out == pcm24
     assert json.loads(str(await serializer.serialize(InterruptionFrame()))) == {"type": "clear"}

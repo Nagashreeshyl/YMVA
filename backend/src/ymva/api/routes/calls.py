@@ -5,6 +5,7 @@ from typing import Annotated, Any
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from starlette.websockets import WebSocketDisconnect
@@ -24,6 +25,7 @@ from ymva.db import get_sessionmaker
 from ymva.logging import get_logger
 from ymva.models import (
     Agent,
+    AgentVersion,
     Call,
     CallDirection,
     CallEvent,
@@ -43,7 +45,8 @@ from ymva.services.calls import (
 )
 from ymva.services.integrations import telephony_client, webhook_urls
 from ymva.telephony import TelephonyError
-from ymva.voice.browser import BrowserAudioSerializer
+from ymva.voice.browser import BROWSER_OUTPUT_SAMPLE_RATE, BrowserAudioSerializer
+from ymva.voice.recording import recording_path
 from ymva.voice.runtime import fail_call, load_setup, run_on_websocket
 from ymva.voice.session import MissingCredentialError
 
@@ -79,6 +82,7 @@ class CallEventOut(BaseModel):
 
 class CallDetail(CallOut):
     provider: str | None
+    has_recording: bool
     variables: dict[str, Any]
     summary: str | None
     extracted: dict[str, Any]
@@ -168,6 +172,7 @@ async def get_call(call_id: uuid.UUID, _: CurrentUser, db: DbSession) -> CallDet
     return CallDetail(
         **_call_out(call, {agent.id: agent.name} if agent else {}),
         provider=account.provider.value if account else None,
+        has_recording=bool(call.recording_key),
         variables=call.variables or {},
         summary=call.summary,
         extracted=call.extracted or {},
@@ -180,6 +185,26 @@ async def get_call(call_id: uuid.UUID, _: CurrentUser, db: DbSession) -> CallDet
             )
             for e in events
         ],
+    )
+
+
+@router.get("/{call_id}/recording")
+async def get_recording(call_id: uuid.UUID, _: CurrentUser, db: DbSession) -> FileResponse:
+    call = await db.get(Call, call_id)
+    if call is None or not call.recording_key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No recording for this call")
+    try:
+        path = recording_path(call.recording_key)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No recording for this call") from exc
+    if not path.is_file():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "The recording file is missing")
+    return FileResponse(
+        path,
+        media_type="audio/wav",
+        filename=f"call-{call.created_at:%Y%m%d-%H%M}-{str(call.id)[:8]}.wav",
+        content_disposition_type="inline",
+        headers={"Cache-Control": "private, max-age=3600"},
     )
 
 
@@ -282,8 +307,10 @@ def _origin_ok(websocket: WebSocket) -> bool:
 
 
 @router.websocket("/web")
-async def browser_call(websocket: WebSocket, agent_id: uuid.UUID) -> None:
-    """Talk to an agent from the dashboard (uses the agent's latest saved version)."""
+async def browser_call(
+    websocket: WebSocket, agent_id: uuid.UUID, version_id: uuid.UUID | None = None
+) -> None:
+    """Talk to an agent from the dashboard: its current draft, or a chosen saved version."""
     if not _origin_ok(websocket):
         await websocket.close(code=1008)
         return
@@ -299,6 +326,12 @@ async def browser_call(websocket: WebSocket, agent_id: uuid.UUID) -> None:
             if agent is None:
                 raise CallSetupError("Agent not found")
             version, _ = await runnable_version(db, agent, draft=True)
+            config_used = agent.draft_config or version.config
+            if version_id is not None:
+                chosen = await db.get(AgentVersion, version_id)
+                if chosen is None or chosen.agent_id != agent.id:
+                    raise CallSetupError("That version doesn't belong to this agent")
+                version, config_used = chosen, chosen.config
             await check_capacity(db)
         except CallSetupError as exc:
             await websocket.send_json({"type": "error", "content": str(exc)})
@@ -310,6 +343,7 @@ async def browser_call(websocket: WebSocket, agent_id: uuid.UUID) -> None:
             direction=CallDirection.WEB,
             status=CallStatus.IN_PROGRESS,
             from_number=f"browser:{user.email}",
+            agent_config=config_used,
             # Test values for the agent's variables arrive as ?var_customer_name=...
             variables={k[4:]: v for k, v in websocket.query_params.items() if k.startswith("var_")},
         )
@@ -326,9 +360,17 @@ async def browser_call(websocket: WebSocket, agent_id: uuid.UUID) -> None:
         await db.commit()
         call_id = call.id
 
-    await websocket.send_json({"type": "call", "call_id": str(call_id), "version": version.version})
+    await websocket.send_json(
+        {
+            "type": "call",
+            "call_id": str(call_id),
+            "version": None if version_id is None and agent.draft_config else version.version,
+        }
+    )
     try:
-        setup = await load_setup(call_id, live_events=True)
+        setup = await load_setup(
+            call_id, live_events=True, output_sample_rate=BROWSER_OUTPUT_SAMPLE_RATE
+        )
     except (CallSetupError, MissingCredentialError) as exc:
         await fail_call(call_id, str(exc))
         await websocket.send_json({"type": "error", "content": str(exc)})

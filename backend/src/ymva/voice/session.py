@@ -19,12 +19,14 @@ from pipecat.frames.frames import (
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.service_switcher import ServiceSwitcher, ServiceSwitcherStrategyFailover
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.llm_service import FunctionCallParams
@@ -40,6 +42,7 @@ from ymva.voice.guard import LanguageGuard
 from ymva.voice.languages import LANGUAGES
 from ymva.voice.prompts import opening_language, opening_lines, system_instruction
 from ymva.voice.recorder import CallRecorder, MetricsObserver
+from ymva.voice.recording import CallRecording
 
 log = get_logger(__name__)
 
@@ -73,6 +76,8 @@ class CallSetup:
     variables: dict[str, str]
     keys: dict[str, str]  # provider -> API key
     send_live_events: bool = False  # browser test calls show the transcript live
+    # Agent audio sample rate leaving the pipeline: 24 kHz for browsers, 16 kHz for phone lines.
+    output_sample_rate: int = PIPELINE_SAMPLE_RATE
     provider_call_id: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -95,6 +100,7 @@ class CallSession:
         self.recorder = CallRecorder(
             setup.call_id, emit=self._emit if setup.send_live_events else None
         )
+        self.recording = CallRecording(setup.call_id)
         self.task: PipelineTask | None = None
         self._ended_by: str = "caller_hung_up"
         self._idle_prompts = 0
@@ -176,6 +182,7 @@ class CallSession:
                     llm,
                     guard,
                     self.transport.output(),
+                    self.recording.processor,
                     pair.assistant(),
                 ]
             )
@@ -183,16 +190,33 @@ class CallSession:
 
         p = config.pipeline
         stt = SarvamSTTService(api_key=self._key("sarvam"), sample_rate=PIPELINE_SAMPLE_RATE)
-        llm = GoogleLLMService(
-            api_key=self._key("google"),
-            settings=GoogleLLMService.Settings(
-                model=p.llm_model, temperature=p.temperature, system_instruction=instruction
-            ),
-        )
-        llm.register_function("end_call", self._end_call)
+        # Main model plus a backup that takes over automatically if the main one fails.
+        models = list(dict.fromkeys([p.llm_model, p.backup_llm_model]))
+        llms: list[FrameProcessor] = [
+            GoogleLLMService(
+                api_key=self._key("google"),
+                settings=GoogleLLMService.Settings(
+                    model=model, temperature=p.temperature, system_instruction=instruction
+                ),
+            )
+            for model in models
+        ]
+        for service in llms:
+            assert isinstance(service, GoogleLLMService)
+            service.register_function("end_call", self._end_call)
+        llm = ServiceSwitcher(services=llms, strategy_type=ServiceSwitcherStrategyFailover)
+
+        async def on_switched(_: Any, service: Any) -> None:
+            await self.recorder.event(
+                CallEventType.ERROR,
+                "Main AI model failed; switched to the backup model",
+                data={"model": getattr(service, "model_name", None)},
+            )
+
+        llm.strategy.add_event_handler("on_service_switched", on_switched)
         tts = SarvamTTSService(
             api_key=self._key("sarvam"),
-            sample_rate=PIPELINE_SAMPLE_RATE,
+            sample_rate=self.setup.output_sample_rate,
             settings=SarvamTTSService.Settings(
                 model="bulbul:v3",
                 voice=p.voice,
@@ -214,10 +238,11 @@ class CallSession:
                 llm,
                 tts,
                 self.transport.output(),
+                self.recording.processor,
                 pair.assistant(),
             ]
         )
-        return pipeline, context, PIPELINE_SAMPLE_RATE, guard, pair
+        return pipeline, context, self.setup.output_sample_rate, guard, pair
 
     def _live_kickoff(self) -> str:
         announcement, greeting = opening_lines(
@@ -241,8 +266,8 @@ class CallSession:
         if announcement:
             await self.task.queue_frame(TTSSpeakFrame(announcement))
         if greeting:
+            # Spoken text is added to the conversation by the assistant aggregator.
             await self.task.queue_frame(TTSSpeakFrame(greeting))
-            context.add_message({"role": "assistant", "content": greeting})
         else:
             language = LANGUAGES[self.opening].name
             context.add_message(
@@ -337,6 +362,9 @@ class CallSession:
         )
         if config.mode == "pipeline":
             await self._open_pipeline_mode(context)
+        else:
+            # Sends the opening instructions to Gemini so it greets without waiting for the caller.
+            await task.queue_frame(LLMRunFrame())
 
         limit = asyncio.create_task(_limit())
         try:
@@ -351,5 +379,9 @@ class CallSession:
                 CallEventType.STATUS, "Call ended", data={"reason": self._ended_by}
             )
             await self.recorder.finish(
-                status=status, end_reason=self._ended_by, metrics=self.metrics, error=error
+                status=status,
+                end_reason=self._ended_by,
+                metrics=self.metrics,
+                error=error,
+                recording_key=self.recording.close(),
             )

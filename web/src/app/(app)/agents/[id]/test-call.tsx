@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Mic, PhoneOff } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { Badge, Button, ErrorNotice, Field, Input, Panel } from "@/components/ui";
+import { Badge, Button, ErrorNotice, Field, Input, Panel, Select } from "@/components/ui";
 import type { AgentDetail } from "@/lib/api";
 import { startBrowserCall, type LiveEvent } from "@/lib/browser-call";
 import { LANGUAGE_NAMES } from "@/lib/format";
@@ -13,6 +13,7 @@ type Line = { id: number; who: "caller" | "agent" | "note"; text: string; langua
 
 export function TestCall({ agent }: { agent: AgentDetail }) {
   const queryClient = useQueryClient();
+  const [versionId, setVersionId] = useState<string>(""); // "" = current edits
   const [values, setValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(agent.config.variables.map((v) => [v.name, v.example])),
   );
@@ -72,7 +73,7 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
     setCallId(null);
     setState("connecting");
     try {
-      session.current = await startBrowserCall(agent.id, values, {
+      session.current = await startBrowserCall(agent.id, versionId || null, values, {
         onEvent,
         onLevel: setLevel,
         onAgentSpeaking: setAgentSpeaking,
@@ -101,6 +102,19 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
     <div className="grid items-start gap-6 lg:grid-cols-[320px_1fr]">
       <Panel title="Test values" description="Used as this call's customer details.">
         <div className="flex flex-col gap-3">
+          <Field label="Test with">
+            {(p) => (
+              <Select {...p} value={versionId} disabled={live} onChange={(e) => setVersionId(e.target.value)}>
+                <option value="">Current edits{agent.has_draft_changes ? " (not yet a version)" : ""}</option>
+                {agent.versions.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    Version {v.version}
+                    {v.id === agent.published_version_id ? " · live" : ""}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
           {agent.config.variables.length === 0 && (
             <p className="text-[13px] text-muted">This agent has no customer details.</p>
           )}
@@ -121,14 +135,14 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
 
       <Panel
         title="Talk to the agent"
-        description={`Uses your microphone and speakers, and the latest saved version (v${agent.latest_version}). Headphones avoid echo.`}
+        description="Uses your microphone and speakers. Headphones avoid echo."
       >
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center gap-3">
             {live ? (
               <Button
                 variant="primary"
-                className="bg-danger text-white"
+                className="bg-danger text-paper"
                 onClick={() => session.current?.stop()}
               >
                 <PhoneOff className="size-4" aria-hidden /> End call

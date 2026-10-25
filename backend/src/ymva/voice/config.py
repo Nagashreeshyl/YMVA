@@ -14,6 +14,20 @@ SARVAM_VOICES = (
 )  # fmt: skip
 GEMINI_LIVE_VOICES = ("Aoede", "Kore", "Leda", "Zephyr", "Puck", "Charon", "Fenrir", "Orus")
 
+# Checked against Google's API on 25 Oct 2026: older models (e.g. gemini-2.5-flash) are closed
+# to new accounts. Fastest first.
+LLM_MODELS = (
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.8-flash",
+)
+GEMINI_LIVE_MODELS = ("models/gemini-3.8-live", "models/gemini-2.5-flash-native-audio-latest")
+RETIRED_LLM_MODELS = {
+    "gemini-2.5-flash": "gemini-3.5-flash-lite",
+    "gemini-2.5-flash-lite": "gemini-3.5-flash-lite",
+}
+
 VARIABLE_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 
 
@@ -37,11 +51,18 @@ class Announcement(BaseModel):
 class PipelineSettings(BaseModel):
     stt_provider: Literal["sarvam"] = "sarvam"
     llm_provider: Literal["google"] = "google"
-    llm_model: str = Field(default="gemini-2.5-flash", max_length=80)
+    llm_model: str = Field(default="gemini-3.5-flash-lite", max_length=80)
+    # Used automatically if the main model fails during a call.
+    backup_llm_model: str = Field(default="gemini-3.1-flash-lite", max_length=80)
     tts_provider: Literal["sarvam"] = "sarvam"
     voice: str = "priya"
     speaking_pace: float = Field(default=1.0, ge=0.6, le=1.6)
     temperature: float = Field(default=0.4, ge=0.0, le=1.5)
+
+    @field_validator("llm_model", "backup_llm_model")
+    @classmethod
+    def _model(cls, v: str) -> str:
+        return RETIRED_LLM_MODELS.get(v, v)
 
     @field_validator("voice")
     @classmethod
@@ -52,9 +73,7 @@ class PipelineSettings(BaseModel):
 
 
 class GeminiLiveSettings(BaseModel):
-    model: str = Field(
-        default="models/gemini-2.5-flash-native-audio-preview-12-2025", max_length=120
-    )
+    model: str = Field(default="models/gemini-3.8-live", max_length=120)
     voice: str = "Aoede"
     temperature: float = Field(default=0.6, ge=0.0, le=1.5)
 
@@ -110,6 +129,18 @@ class AgentConfig(BaseModel):
         return self
 
 
-def render(template: str, variables: dict[str, str]) -> str:
-    """Fill {{name}} placeholders; unknown names are left visible so mistakes are noticed."""
-    return VARIABLE_RE.sub(lambda m: str(variables.get(m.group(1), m.group(0))), template)
+def render(template: str, variables: dict[str, str], missing: str | None = None) -> str:
+    """Fill {{name}} placeholders. Missing values become `missing` if given, otherwise the
+    placeholder is left visible so mistakes are noticed."""
+
+    def value(m: re.Match[str]) -> str:
+        found = variables.get(m.group(1))
+        if found:
+            return str(found)
+        return missing if missing is not None else m.group(0)
+
+    return VARIABLE_RE.sub(value, template)
+
+
+def missing_variables(template: str, variables: dict[str, str]) -> set[str]:
+    return {m.group(1) for m in VARIABLE_RE.finditer(template) if not variables.get(m.group(1))}

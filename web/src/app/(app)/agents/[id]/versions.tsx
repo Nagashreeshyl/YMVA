@@ -1,24 +1,47 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useConfirm } from "@/components/dialog";
 import { Badge, Button, ErrorNotice } from "@/components/ui";
 import { api, type AgentDetail } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 
-export function Versions({ agent, canEdit }: { agent: AgentDetail; canEdit: boolean }) {
+export function Versions({
+  agent,
+  canEdit,
+  onLoaded,
+}: {
+  agent: AgentDetail;
+  canEdit: boolean;
+  onLoaded: () => void;
+}) {
   const queryClient = useQueryClient();
+  const confirm = useConfirm();
+  const apply = (updated: AgentDetail) => {
+    queryClient.setQueryData(["agent", agent.id], updated);
+    queryClient.invalidateQueries({ queryKey: ["agents"] });
+  };
   const publish = useMutation({
     mutationFn: (versionId: string) =>
       api<AgentDetail>(`/agents/${agent.id}/publish`, { method: "POST", json: { version_id: versionId } }),
+    onSuccess: apply,
+  });
+  const restore = useMutation({
+    mutationFn: (versionId: string) =>
+      api<AgentDetail>(`/agents/${agent.id}/versions/${versionId}/restore`, { method: "POST" }),
     onSuccess: (updated) => {
-      queryClient.setQueryData(["agent", agent.id], updated);
-      queryClient.invalidateQueries({ queryKey: ["agents"] });
+      apply(updated);
+      onLoaded();
     },
   });
 
   return (
     <div className="flex flex-col gap-4">
-      {publish.isError && <ErrorNotice error={publish.error} />}
+      <p className="max-w-[70ch] text-[13px] text-muted">
+        A version is a saved snapshot of the agent. Edits are kept as a draft until you choose “Save as
+        version” or “Publish”. Phone calls always use the live version.
+      </p>
+      {(publish.isError || restore.isError) && <ErrorNotice error={publish.error ?? restore.error} />}
       <ol className="divide-y divide-line rounded-xl border border-line">
         {agent.versions.map((v) => {
           const isLive = v.id === agent.published_version_id;
@@ -32,25 +55,46 @@ export function Versions({ agent, canEdit }: { agent: AgentDetail; canEdit: bool
                   {v.created_by && ` · ${v.created_by}`}
                 </p>
               </div>
-              {isLive ? (
-                <Badge tone="success">Live</Badge>
-              ) : (
-                canEdit && (
+              {isLive && <Badge tone="success">Live</Badge>}
+              {canEdit && (
+                <>
                   <Button
                     variant="secondary"
                     size="sm"
-                    loading={publish.isPending && publish.variables === v.id}
-                    onClick={() =>
-                      window.confirm(
-                        `Make v${v.version} live? New phone calls will use it immediately; calls in progress are not affected.`,
-                      ) && publish.mutate(v.id)
-                    }
+                    loading={restore.isPending && restore.variables === v.id}
+                    onClick={async () => {
+                      if (agent.has_draft_changes) {
+                        const { ok } = await confirm({
+                          title: `Load v${v.version} into the editor?`,
+                          body: "Your unsaved draft changes will be replaced. Save them as a version first if you want to keep them.",
+                          confirmLabel: "Replace draft",
+                          tone: "danger",
+                        });
+                        if (!ok) return;
+                      }
+                      restore.mutate(v.id);
+                    }}
                   >
-                    {agent.published_version !== null && v.version < agent.published_version
-                      ? "Roll back to this"
-                      : "Publish"}
+                    Load into editor
                   </Button>
-                )
+                  {!isLive && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      loading={publish.isPending && publish.variables === v.id}
+                      onClick={async () => {
+                        const { ok } = await confirm({
+                          title: `Make v${v.version} live?`,
+                          body: "New phone calls use it immediately. Calls already in progress aren't affected.",
+                          confirmLabel: `Publish v${v.version}`,
+                        });
+                        if (ok) publish.mutate(v.id);
+                      }}
+                    >
+                      Publish
+                    </Button>
+                  )}
+                </>
               )}
             </li>
           );

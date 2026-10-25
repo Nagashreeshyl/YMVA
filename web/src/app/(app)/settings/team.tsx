@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Users } from "lucide-react";
 import { useState } from "react";
 import { Badge, Button, EmptyState, ErrorNotice, Field, Input, Select, Skeleton } from "@/components/ui";
+import { useConfirm } from "@/components/dialog";
 import { api, type Role, type User } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
 
@@ -68,6 +69,7 @@ function AddPersonForm({ onDone }: { onDone: () => void }) {
 }
 
 function PersonRow({ user, isSelf }: { user: User; isSelf: boolean }) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [resetting, setResetting] = useState(false);
   const update = useMutation({
@@ -119,13 +121,17 @@ function PersonRow({ user, isSelf }: { user: User; isSelf: boolean }) {
                 variant={user.is_active ? "danger" : "secondary"}
                 size="sm"
                 loading={update.isPending && update.variables?.is_active !== undefined}
-                onClick={() => {
-                  if (
-                    !user.is_active ||
-                    window.confirm(`Deactivate ${user.name}? They will be signed out immediately.`)
-                  ) {
-                    update.mutate({ is_active: !user.is_active });
+                onClick={async () => {
+                  if (user.is_active) {
+                    const { ok } = await confirm({
+                      title: `Deactivate ${user.name}?`,
+                      body: "They'll be signed out immediately and can't sign in until you reactivate them.",
+                      confirmLabel: "Deactivate",
+                      tone: "danger",
+                    });
+                    if (!ok) return;
                   }
+                  update.mutate({ is_active: !user.is_active });
                 }}
               >
                 {user.is_active ? "Deactivate" : "Reactivate"}

@@ -15,6 +15,7 @@ import {
   Select,
   Skeleton,
 } from "@/components/ui";
+import { useConfirm } from "@/components/dialog";
 import { api, type AgentSummary, type Integrations, type PhoneNumber } from "@/lib/api";
 import { useMe } from "@/lib/session";
 
@@ -107,6 +108,7 @@ function NumberRow({
   agents: AgentSummary[];
   canEdit: boolean;
 }) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["numbers"] });
   const update = useMutation({
@@ -159,10 +161,15 @@ function NumberRow({
             variant="danger"
             size="sm"
             loading={remove.isPending}
-            onClick={() =>
-              window.confirm(`Remove ${number.e164} from YMVA? (It stays in your provider account.)`) &&
-              remove.mutate()
-            }
+            onClick={async () => {
+              const { ok } = await confirm({
+                title: `Remove ${number.e164}?`,
+                body: "It's removed from YMVA only; the number stays in your provider account.",
+                confirmLabel: "Remove",
+                tone: "danger",
+              });
+              if (ok) remove.mutate();
+            }}
           >
             Remove
           </Button>

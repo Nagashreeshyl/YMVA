@@ -15,6 +15,7 @@ import {
   Skeleton,
 } from "@/components/ui";
 import { CopyField } from "@/components/copy";
+import { useConfirm } from "@/components/dialog";
 import { api, type AIProviderStatus, type Integrations, type TelephonyAccount } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
 import { useMe } from "@/lib/session";
@@ -50,6 +51,7 @@ function ConnectionBadge({
 }
 
 function AIKeyCard({ item, canEdit }: { item: AIProviderStatus; canEdit: boolean }) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(!item.configured);
   const [key, setKey] = useState("");
@@ -152,10 +154,15 @@ function AIKeyCard({ item, canEdit }: { item: AIProviderStatus; canEdit: boolean
             variant="danger"
             size="sm"
             loading={remove.isPending}
-            onClick={() =>
-              window.confirm(`Remove the ${item.label} key? Agents that use it will stop working.`) &&
-              remove.mutate()
-            }
+            onClick={async () => {
+              const { ok } = await confirm({
+                title: `Remove the ${item.label} key?`,
+                body: "Agents that use it will stop working until a new key is added.",
+                confirmLabel: "Remove key",
+                tone: "danger",
+              });
+              if (ok) remove.mutate();
+            }}
           >
             Remove
           </Button>
@@ -166,6 +173,7 @@ function AIKeyCard({ item, canEdit }: { item: AIProviderStatus; canEdit: boolean
 }
 
 function AccountRow({ account, canEdit }: { account: TelephonyAccount; canEdit: boolean }) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["integrations"] });
@@ -206,7 +214,15 @@ function AccountRow({ account, canEdit }: { account: TelephonyAccount; canEdit: 
             <Button
               variant="danger"
               size="sm"
-              onClick={() => window.confirm(`Disconnect ${account.name}?`) && remove.mutate()}
+              onClick={async () => {
+                const { ok } = await confirm({
+                  title: `Disconnect ${account.name}?`,
+                  body: "Calls can no longer be placed or received through this account.",
+                  confirmLabel: "Disconnect",
+                  tone: "danger",
+                });
+                if (ok) remove.mutate();
+              }}
               loading={remove.isPending}
             >
               Disconnect

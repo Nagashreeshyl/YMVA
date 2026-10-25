@@ -1,7 +1,7 @@
 """WebSocket protocol for browser test calls.
 
 Browser -> server: binary frames of 16-bit little-endian mono PCM at 16 kHz.
-Server -> browser: binary frames of the same format (agent audio), and JSON text frames:
+Server -> browser: binary frames of 16-bit mono PCM at 24 kHz (agent audio), and JSON text frames:
   {"type": "clear"} on barge-in (drop queued audio), plus transcript/status events.
 """
 
@@ -19,7 +19,8 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameProcessorSetup
 from pipecat.serializers.base_serializer import FrameSerializer
 
-BROWSER_SAMPLE_RATE = 16000
+BROWSER_SAMPLE_RATE = 16000  # microphone audio from the browser
+BROWSER_OUTPUT_SAMPLE_RATE = 24000  # agent audio to the browser: full voice quality
 
 
 class BrowserAudioSerializer(FrameSerializer):
@@ -37,9 +38,9 @@ class BrowserAudioSerializer(FrameSerializer):
             return json.dumps({"type": "clear"})
         if isinstance(frame, AudioRawFrame):
             audio = frame.audio
-            if frame.sample_rate != BROWSER_SAMPLE_RATE:
+            if frame.sample_rate != BROWSER_OUTPUT_SAMPLE_RATE:
                 audio = await self._out_resampler.resample(
-                    audio, frame.sample_rate, BROWSER_SAMPLE_RATE
+                    audio, frame.sample_rate, BROWSER_OUTPUT_SAMPLE_RATE
                 )
             return audio or None
         if isinstance(frame, (OutputTransportMessageFrame, OutputTransportMessageUrgentFrame)):

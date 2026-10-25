@@ -157,6 +157,7 @@ class CallRecorder:
         end_reason: str,
         metrics: MetricsObserver | None,
         error: str | None = None,
+        recording_key: str | None = None,
     ) -> None:
         now = datetime.now(UTC)
         async with get_sessionmaker()() as session:
@@ -174,4 +175,6 @@ class CallRecorder:
                 call.cost_breakdown = {"usage": metrics.usage}
             if error:
                 call.error = error[:2000]
+            if recording_key:
+                call.recording_key = recording_key
             await session.commit()

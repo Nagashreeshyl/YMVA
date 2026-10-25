@@ -159,6 +159,7 @@ export interface AgentConfig {
     stt_provider: "sarvam";
     llm_provider: "google";
     llm_model: string;
+    backup_llm_model: string;
     tts_provider: "sarvam";
     voice: string;
     speaking_pace: number;
@@ -182,7 +183,10 @@ export interface AgentSummary {
 }
 
 export interface AgentDetail extends AgentSummary {
+  /** The saved draft if there is one, otherwise the latest version. */
   config: AgentConfig;
+  has_draft_changes: boolean;
+  draft_updated_at: string | null;
   latest_version_id: string;
   published_version_id: string | null;
   versions: {
@@ -200,6 +204,7 @@ export interface AgentOptions {
   sarvam_voices: string[];
   gemini_live_voices: string[];
   llm_models: string[];
+  gemini_live_models: string[];
   templates: { id: string; name: string }[];
 }
 
@@ -233,6 +238,7 @@ type LatencySummary = { p50_ms: number; p95_ms: number; count: number } | null;
 
 export interface CallDetail extends CallSummary {
   provider: string | null;
+  has_recording: boolean;
   variables: Record<string, string>;
   summary: string | null;
   extracted: Record<string, unknown>;

@@ -22,7 +22,8 @@ COPY alembic ./alembic
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
 
-RUN useradd --system --uid 10001 ymva
+RUN useradd --system --uid 10001 ymva && mkdir -p /data/recordings && chown -R ymva /data
+ENV RECORDINGS_DIR=/data/recordings
 USER ymva
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \

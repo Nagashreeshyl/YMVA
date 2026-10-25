@@ -272,3 +272,48 @@ async def test_viewer_cannot_change_integrations_or_place_calls(
         "to": "+919876543210",
     }
     assert (await admin_client.post("/api/calls/outbound", json=outbound)).status_code == 403
+
+
+async def test_editor_saves_drafts_without_creating_versions(
+    admin_client: httpx.AsyncClient,
+) -> None:
+    agent = (await admin_client.post("/api/agents", json={"name": "Drafts"})).json()
+    aid = agent["id"]
+    config = agent["config"] | {"mode": "gemini_live"}
+
+    for temperature in (0.3, 0.5, 0.7):  # several edits in a row
+        config["pipeline"]["temperature"] = temperature
+        draft = (await admin_client.put(f"/api/agents/{aid}/draft", json={"config": config})).json()
+    assert draft["latest_version"] == 1 and draft["has_draft_changes"]
+    assert (
+        draft["config"]["mode"] == "gemini_live"
+        and draft["config"]["pipeline"]["temperature"] == 0.7
+    )
+
+    saved = (
+        await admin_client.post(f"/api/agents/{aid}/versions", json={"note": "try live"})
+    ).json()
+    assert saved["latest_version"] == 2 and not saved["has_draft_changes"]
+    again = await admin_client.post(f"/api/agents/{aid}/versions", json={"note": "same"})
+    assert again.status_code == 409
+
+    # Restore v1 into the editor, then publish straight from the draft.
+    v1 = next(v for v in saved["versions"] if v["version"] == 1)
+    restored = (await admin_client.post(f"/api/agents/{aid}/versions/{v1['id']}/restore")).json()
+    assert restored["config"]["mode"] == "pipeline" and restored["has_draft_changes"]
+    published = (await admin_client.post(f"/api/agents/{aid}/publish", json={})).json()
+    assert published["latest_version"] == 3 and published["published_version"] == 3
+    assert not published["has_unpublished_changes"]
+
+    discarded = (await admin_client.delete(f"/api/agents/{aid}/draft")).json()
+    assert discarded["config"]["mode"] == "pipeline"
+
+
+async def test_retired_models_are_upgraded(admin_client: httpx.AsyncClient) -> None:
+    agent = (await admin_client.post("/api/agents", json={"name": "Old model"})).json()
+    config = agent["config"]
+    config["pipeline"]["llm_model"] = "gemini-2.5-flash"
+    draft = (
+        await admin_client.put(f"/api/agents/{agent['id']}/draft", json={"config": config})
+    ).json()
+    assert draft["config"]["pipeline"]["llm_model"] == "gemini-3.5-flash-lite"

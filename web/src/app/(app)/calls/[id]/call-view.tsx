@@ -5,6 +5,7 @@ import { ArrowLeft, Languages, Wrench } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { CallStatusBadge, DirectionLabel } from "@/components/call-status";
+import { RecordingPlayer } from "@/components/recording-player";
 import { Button, ErrorNotice, Panel, Skeleton } from "@/components/ui";
 import { api, type CallDetail, type CallEvent } from "@/lib/api";
 import { formatDateTime, formatDuration, formatNumber, humanize, LANGUAGE_NAMES } from "@/lib/format";
@@ -140,6 +141,14 @@ export function CallView() {
         )}
       </header>
 
+      {c.has_recording && (
+        <Panel title="Recording" className="mb-6">
+          <RecordingPlayer
+            src={`/api/calls/${c.id}/recording`}
+            downloadName={`call-${c.created_at.slice(0, 10)}-${c.id.slice(0, 8)}.wav`}
+          />
+        </Panel>
+      )}
       <div className="grid items-start gap-6 lg:grid-cols-[1fr_320px]">
         <Panel title="Conversation">
           {c.events.length === 0 ? (

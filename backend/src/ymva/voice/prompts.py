@@ -3,7 +3,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from ymva.voice.config import AgentConfig, render
+from ymva.voice.config import AgentConfig, missing_variables, render
 from ymva.voice.languages import LANGUAGES, language_for_state
 
 VOICE_RULES = """\
@@ -13,7 +13,9 @@ How to speak on a phone call:
   them in the current language (for example "five thousand two hundred rupees", "the 26th of
   October at 3 PM").
 - If you didn't understand, politely ask the caller to repeat.
-- Don't invent facts. If you don't know something, say you'll arrange for someone to follow up.
+- Never invent amounts, dates, loan numbers, names or any other details. Use only what is
+  written in these instructions. Anything marked [not provided] is unknown: don't guess it;
+  say a team member will follow up with the details.
 - When the conversation is complete, or the caller wants to end it, say a short goodbye in the
   caller's language and then call the end_call tool."""
 
@@ -36,7 +38,7 @@ def system_instruction(
     now = datetime.now(ZoneInfo(timezone))
     names = ", ".join(LANGUAGES[c].name for c in config.languages)
     known = "\n".join(f"- {k}: {v}" for k, v in variables.items() if v) or "- (none)"
-    return f"""{render(config.system_prompt, variables).strip()}
+    return f"""{render(config.system_prompt, variables, missing="[not provided]").strip()}
 
 Call details:
 - Today is {now:%A, %d %B %Y}, and the time is {now:%I:%M %p} ({timezone}). Resolve dates like
@@ -62,4 +64,8 @@ def opening_lines(
         text = config.announcement.translations.get(opening) or config.announcement.text
         announcement = render(text, variables).strip() or None
     greeting = config.greetings.get(opening)
-    return announcement, (render(greeting, variables).strip() or None) if greeting else None
+    # A scripted greeting that needs a detail we don't have is left to the model instead of
+    # being read out with a gap.
+    if not greeting or missing_variables(greeting, variables):
+        return announcement, None
+    return announcement, render(greeting, variables).strip() or None
