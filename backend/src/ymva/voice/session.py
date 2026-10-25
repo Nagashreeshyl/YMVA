@@ -257,13 +257,18 @@ class CallSession:
                     # Native-audio models choose their reply language themselves; forcing a
                     # language code locks them into it, so it is deliberately not sent.
                     language=None,  # type: ignore[arg-type]
-                    # Reply after half a second of silence instead of Gemini's longer default.
-                    vad=GeminiVADParams(silence_duration_ms=500),
+                    # Our VAD + end-of-turn model decide when the caller has finished (as in
+                    # Standard mode). Gemini's own detection sometimes missed short answers
+                    # ("haan") for 10+ s and waited 2 s+ on a real microphone.
+                    vad=GeminiVADParams(disabled=True),
                     # No reasoning before speaking: replies start about 0.2 s sooner. (Adding
                     # include_thoughts=False here stops Gemini answering the caller at all.)
                     thinking=ThinkingConfig(thinking_budget=0),
                 ),
                 tools=tools,
+                # Audio from just before our VAD notices speech; Pipecat's 0.3 s clipped short
+                # answers ("haudu" was heard as "audio").
+                user_audio_preroll_secs=0.6,
                 # The opening decides whether Gemini speaks first (see _open_live_mode).
                 inference_on_context_initialization=False,
             )
