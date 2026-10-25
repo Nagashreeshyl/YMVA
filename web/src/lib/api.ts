@@ -167,6 +167,7 @@ export interface AgentConfig {
   };
   gemini_live: { model: string; voice: string; temperature: number };
   limits: { max_duration_seconds: number; silence_timeout_seconds: number };
+  atmosphere: { room_tone: boolean; typing_while_thinking: boolean; volume: number };
 }
 
 export interface AgentSummary {

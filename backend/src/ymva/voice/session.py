@@ -15,6 +15,7 @@ from pipecat.frames.frames import (
     LLMMessagesAppendFrame,
     LLMRunFrame,
     OutputTransportMessageUrgentFrame,
+    TTSAudioRawFrame,
     TTSSpeakFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
@@ -27,22 +28,27 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.processors.frame_processor import FrameProcessor
-from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
+from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService, GeminiVADParams
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.sarvam.stt import SarvamSTTService
 from pipecat.services.sarvam.tts import SarvamTTSService
 from pipecat.transports.base_transport import BaseTransport
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from ymva.config import get_settings
 from ymva.logging import get_logger
 from ymva.models import CallEventType, CallStatus
+from ymva.voice import greeting
+from ymva.voice.ambience import AmbienceMixer
 from ymva.voice.config import AgentConfig
 from ymva.voice.guard import LanguageGuard
 from ymva.voice.languages import LANGUAGES
+from ymva.voice.live_state import ConversationState
 from ymva.voice.prompts import opening_language, opening_lines, system_instruction
 from ymva.voice.recorder import CallRecorder, MetricsObserver
 from ymva.voice.recording import CallRecording
+from ymva.voice.turns import turn_stop_strategy
 
 log = get_logger(__name__)
 
@@ -78,8 +84,21 @@ class CallSetup:
     send_live_events: bool = False  # browser test calls show the transcript live
     # Agent audio sample rate leaving the pipeline: 24 kHz for browsers, 16 kHz for phone lines.
     output_sample_rate: int = PIPELINE_SAMPLE_RATE
+    # Call atmosphere mixer, shared with the output transport (see make_mixer).
+    mixer: AmbienceMixer | None = None
     provider_call_id: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+def make_mixer(config: AgentConfig) -> AmbienceMixer | None:
+    a = config.atmosphere
+    if not (a.room_tone or a.typing_while_thinking) or a.volume == 0:
+        return None
+    return AmbienceMixer(room_tone=a.room_tone, typing=a.typing_while_thinking, volume=a.volume)
+
+
+# How long the opening may wait for the prepared greeting before speaking it the normal way.
+GREETING_WAIT_SECS = 3.0
 
 
 def required_providers(config: AgentConfig) -> set[str]:
@@ -104,6 +123,22 @@ class CallSession:
         self.task: PipelineTask | None = None
         self._ended_by: str = "caller_hung_up"
         self._idle_prompts = 0
+
+    async def _warm_up_llm(self) -> None:
+        """Open the connection to the model while the greeting plays, so the first reply
+        doesn't pay for connection setup (measured: ~1-1.8 s cold vs ~0.2-0.6 s warm)."""
+        llm = getattr(self, "_warm_llm", None)
+        client = getattr(llm, "_client", None)
+        if client is None:
+            return
+        try:
+            await client.aio.models.generate_content(
+                model=self.setup.config.pipeline.llm_model,
+                contents="Reply with OK.",
+                config={"max_output_tokens": 1},
+            )
+        except Exception as exc:  # warm-up is best effort
+            log.debug("llm warm-up failed", error=str(exc))
 
     async def _emit(self, event: dict[str, Any]) -> None:
         if self.task is not None:
@@ -150,8 +185,11 @@ class CallSession:
             )
 
         vad = SileroVADAnalyzer(params=VADParams(stop_secs=0.2))
+        turn_end = turn_stop_strategy()
         user_params = LLMUserAggregatorParams(
-            vad_analyzer=vad, user_idle_timeout=config.limits.silence_timeout_seconds
+            vad_analyzer=vad,
+            user_idle_timeout=config.limits.silence_timeout_seconds,
+            user_turn_strategies=UserTurnStrategies(stop=[turn_end]),
         )
 
         if config.mode == "gemini_live":
@@ -166,6 +204,8 @@ class CallSession:
                     # Native-audio models choose their reply language themselves; forcing a
                     # language code locks them into it, so it is deliberately not sent.
                     language=None,  # type: ignore[arg-type]
+                    # Reply after half a second of silence instead of Gemini's longer default.
+                    vad=GeminiVADParams(silence_duration_ms=500),
                 ),
                 tools=tools,
             )
@@ -204,6 +244,7 @@ class CallSession:
         for service in llms:
             assert isinstance(service, GoogleLLMService)
             service.register_function("end_call", self._end_call)
+        self._warm_llm = llms[0]
         llm = ServiceSwitcher(services=llms, strategy_type=ServiceSwitcherStrategyFailover)
 
         async def on_switched(_: Any, service: Any) -> None:
@@ -260,14 +301,32 @@ class CallSession:
 
     async def _open_pipeline_mode(self, context: LLMContext) -> None:
         assert self.task is not None
-        announcement, greeting = opening_lines(
+        # Prepared in advance (while ringing / connecting): play it as soon as audio starts.
+        ready = await greeting.take(self.setup.call_id, wait_seconds=GREETING_WAIT_SECS)
+        if ready is not None:
+            chunk = ready.sample_rate * 2 // 50  # 20 ms
+            await self.task.queue_frames(
+                [
+                    TTSAudioRawFrame(
+                        audio=ready.pcm[i : i + chunk],
+                        sample_rate=ready.sample_rate,
+                        num_channels=1,
+                    )
+                    for i in range(0, len(ready.pcm), chunk)
+                ]
+            )
+            context.add_message({"role": "assistant", "content": ready.text})
+            await self.recorder.event(CallEventType.AGENT_TURN, ready.text, language=ready.language)
+            return
+
+        announcement, greeting_text = opening_lines(
             self.setup.config, self.setup.variables, self.opening
         )
         if announcement:
             await self.task.queue_frame(TTSSpeakFrame(announcement))
-        if greeting:
+        if greeting_text:
             # Spoken text is added to the conversation by the assistant aggregator.
-            await self.task.queue_frame(TTSSpeakFrame(greeting))
+            await self.task.queue_frame(TTSSpeakFrame(greeting_text))
         else:
             language = LANGUAGES[self.opening].name
             context.add_message(
@@ -301,7 +360,12 @@ class CallSession:
                 enable_metrics=True,
                 enable_usage_metrics=True,
             ),
-            observers=[self.metrics],
+            observers=[
+                self.metrics,
+                ConversationState(
+                    self.setup.mixer, self._emit if self.setup.send_live_events else None
+                ),
+            ],
             idle_timeout_secs=config.limits.silence_timeout_seconds * 3 + 30,
             enable_rtvi=False,
         )
@@ -360,8 +424,12 @@ class CallSession:
             language=self.opening,
             data={"mode": config.mode, "opening_language": self.opening},
         )
+        warm_up: asyncio.Task[None] | None = None
+        opening: asyncio.Task[None] | None = None
         if config.mode == "pipeline":
-            await self._open_pipeline_mode(context)
+            # Runs alongside pipeline start-up, so waiting for the prepared greeting costs nothing.
+            opening = asyncio.create_task(self._open_pipeline_mode(context))
+            warm_up = asyncio.create_task(self._warm_up_llm())
         else:
             # Sends the opening instructions to Gemini so it greets without waiting for the caller.
             await task.queue_frame(LLMRunFrame())
@@ -375,6 +443,9 @@ class CallSession:
             log.exception("call pipeline failed", call_id=str(self.setup.call_id))
         finally:
             limit.cancel()
+            for background in (warm_up, opening):
+                if background is not None:
+                    background.cancel()
             await self.recorder.event(
                 CallEventType.STATUS, "Call ended", data={"reason": self._ended_by}
             )

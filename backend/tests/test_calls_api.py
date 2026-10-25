@@ -9,6 +9,7 @@ from ymva.redis import get_redis
 from ymva.services import integrations as integrations_service
 from ymva.telephony.base import PlacedCall
 from ymva.telephony.plivo_family import PlivoClient
+from ymva.voice import greeting
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +28,10 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         placed.append(kwargs)
         return PlacedCall(provider_call_id="req-1")
 
+    async def no_greeting(*_: Any) -> None:
+        return None
+
+    monkeypatch.setattr(greeting, "_synthesize", no_greeting)
     monkeypatch.setattr(integrations_service, "verify_ai_key", verify_ai_key)
     monkeypatch.setattr(PlivoClient, "verify", verify)
     monkeypatch.setattr(PlivoClient, "place_call", place_call)

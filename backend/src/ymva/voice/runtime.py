@@ -11,8 +11,15 @@ from ymva.logging import get_logger
 from ymva.models import Agent, AgentVersion, Call, CallStatus
 from ymva.services.calls import ACTIVE_SESSIONS, CallSetupError, string_variables
 from ymva.services.integrations import load_ai_keys
+from ymva.voice import greeting
 from ymva.voice.config import AgentConfig
-from ymva.voice.session import CallSession, CallSetup, MissingCredentialError, required_providers
+from ymva.voice.session import (
+    CallSession,
+    CallSetup,
+    MissingCredentialError,
+    make_mixer,
+    required_providers,
+)
 
 log = get_logger(__name__)
 
@@ -30,6 +37,9 @@ async def load_setup(
             raise CallSetupError("The agent for this call no longer exists")
         config = AgentConfig.model_validate(call.agent_config or version.config)
         keys = await load_ai_keys(db)
+    variables = string_variables(call.variables)
+    if not greeting.has(call_id):
+        greeting.prefetch(call_id, config, variables, keys.get("sarvam"), output_sample_rate)
     missing = sorted(required_providers(config) - keys.keys())
     if missing:
         raise MissingCredentialError(
@@ -38,7 +48,7 @@ async def load_setup(
     return CallSetup(
         call_id=call_id,
         config=config,
-        variables=string_variables(call.variables),
+        variables=variables,
         keys=keys,
         send_live_events=live_events,
         provider_call_id=call.provider_call_id,
@@ -63,11 +73,13 @@ async def fail_call(call_id: uuid.UUID, reason: str) -> None:
 async def run_on_websocket(
     websocket: WebSocket, setup: CallSetup, serializer: FrameSerializer
 ) -> None:
+    setup.mixer = make_mixer(setup.config)
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
+            audio_out_mixer=setup.mixer,
             add_wav_header=False,
             serializer=serializer,
             session_timeout=setup.config.limits.max_duration_seconds + 60,

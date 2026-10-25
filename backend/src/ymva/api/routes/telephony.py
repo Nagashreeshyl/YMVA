@@ -34,10 +34,16 @@ from ymva.services.calls import (
     redeem_stream_token,
     runnable_version,
 )
-from ymva.services.integrations import telephony_client, webhook_urls, websocket_url
+from ymva.services.integrations import (
+    load_ai_keys,
+    telephony_client,
+    webhook_urls,
+    websocket_url,
+)
 from ymva.telephony.base import digits, reject_xml, stream_xml
+from ymva.voice import greeting
 from ymva.voice.runtime import fail_call, load_setup, run_on_websocket
-from ymva.voice.session import MissingCredentialError
+from ymva.voice.session import PIPELINE_SAMPLE_RATE, MissingCredentialError
 
 router = APIRouter(prefix="/telephony", tags=["telephony"])
 log = get_logger(__name__)
@@ -102,7 +108,7 @@ async def answer(
                 reject_xml("Sorry, this number is not available right now. Please call later.")
             )
         try:
-            version, _ = await runnable_version(db, agent)
+            version, inbound_config = await runnable_version(db, agent)
             await check_capacity(db)
         except CallSetupError as exc:
             log.warning("inbound call rejected", reason=str(exc))
@@ -122,6 +128,10 @@ async def answer(
         )
         db.add(call)
         await db.flush()
+        keys = await load_ai_keys(db)
+        greeting.prefetch(
+            call.id, inbound_config, call.variables, keys.get("sarvam"), PIPELINE_SAMPLE_RATE
+        )
 
     if hook.provider_call_id:
         call.provider_call_id = hook.provider_call_id

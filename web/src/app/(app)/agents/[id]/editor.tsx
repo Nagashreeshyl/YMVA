@@ -84,7 +84,7 @@ export function AgentEditor({
     <fieldset disabled={readOnly} className="flex min-w-0 flex-col gap-6">
       <Panel
         title="How it talks"
-        description="Standard uses Sarvam for listening and speaking Indian languages, and Gemini to think. Gemini Live does all three in one model."
+description="Standard (recommended) uses Sarvam to hear and speak Indian languages and Gemini to think: replies in about 1.3 s in our tests. Gemini Live does everything in one model but was slower (2–8 s) and misheard Kannada in testing."
       >
         <div className="flex flex-col gap-5">
           <Segmented
@@ -415,6 +415,40 @@ export function AgentEditor({
             ))}
           </div>
         )}
+      </Panel>
+
+      <Panel
+        title="Call atmosphere"
+        description="Soft sounds under the agent's voice so the line never sounds dead or robotic."
+      >
+        <div className="flex max-w-xl flex-col gap-4">
+          <Switch
+            label="Office background"
+            description="A quiet room tone for the whole call, like a real office line."
+            checked={draft.atmosphere.room_tone}
+            onChange={(on) => update((d) => void (d.atmosphere.room_tone = on))}
+          />
+          <Switch
+            label="Typing while thinking"
+            description="Soft keyboard sounds in the moment between the caller finishing and the agent replying."
+            checked={draft.atmosphere.typing_while_thinking}
+            onChange={(on) => update((d) => void (d.atmosphere.typing_while_thinking = on))}
+          />
+          <Field label={`Volume · ${Math.round(draft.atmosphere.volume * 100)}%`}>
+            {(p) => (
+              <input
+                {...p}
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={draft.atmosphere.volume}
+                onChange={(e) => update((d) => void (d.atmosphere.volume = Number(e.target.value)))}
+                className="h-10 accent-[var(--ink)]"
+              />
+            )}
+          </Field>
+        </div>
       </Panel>
 
       <Panel title="Call limits">

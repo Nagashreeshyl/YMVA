@@ -43,11 +43,13 @@ from ymva.services.calls import (
     runnable_version,
     string_variables,
 )
-from ymva.services.integrations import telephony_client, webhook_urls
+from ymva.services.integrations import load_ai_keys, telephony_client, webhook_urls
 from ymva.telephony import TelephonyError
+from ymva.voice import greeting
 from ymva.voice.browser import BROWSER_OUTPUT_SAMPLE_RATE, BrowserAudioSerializer
 from ymva.voice.recording import recording_path
 from ymva.voice.runtime import fail_call, load_setup, run_on_websocket
+from ymva.voice.session import PIPELINE_SAMPLE_RATE as PHONE_SAMPLE_RATE
 from ymva.voice.session import MissingCredentialError
 
 router = APIRouter(prefix="/calls", tags=["calls"])
@@ -254,6 +256,9 @@ async def place_outbound(
     call.status = CallStatus.RINGING
     # Provider's request ID until the answer webhook reports the real call ID.
     call.provider_call_id = placed.provider_call_id
+    # Prepare the greeting audio while the phone rings, so it plays the moment they answer.
+    keys = await load_ai_keys(db)
+    greeting.prefetch(call.id, config, call.variables, keys.get("sarvam"), PHONE_SAMPLE_RATE)
     await audit.record(
         db,
         actor=admin,

@@ -23,6 +23,11 @@ LLM_MODELS = (
     "gemini-3.8-flash",
 )
 GEMINI_LIVE_MODELS = ("models/gemini-3.8-live", "models/gemini-2.5-flash-native-audio-latest")
+# Older Live previews answered in 3-18 s in tests; gemini-3.8-live in about 2.5 s.
+RETIRED_LIVE_MODELS = {
+    "models/gemini-2.5-flash-native-audio-preview-12-2025": "models/gemini-3.8-live",
+    "models/gemini-2.5-flash-native-audio-preview-09-2025": "models/gemini-3.8-live",
+}
 RETIRED_LLM_MODELS = {
     "gemini-2.5-flash": "gemini-3.5-flash-lite",
     "gemini-2.5-flash-lite": "gemini-3.5-flash-lite",
@@ -73,6 +78,11 @@ class PipelineSettings(BaseModel):
 
 
 class GeminiLiveSettings(BaseModel):
+    @field_validator("model")
+    @classmethod
+    def _model(cls, v: str) -> str:
+        return RETIRED_LIVE_MODELS.get(v, v)
+
     model: str = Field(default="models/gemini-3.8-live", max_length=120)
     voice: str = "Aoede"
     temperature: float = Field(default=0.6, ge=0.0, le=1.5)
@@ -83,6 +93,14 @@ class GeminiLiveSettings(BaseModel):
         if v not in GEMINI_LIVE_VOICES:
             raise ValueError(f"Unknown Gemini Live voice '{v}'")
         return v
+
+
+class Atmosphere(BaseModel):
+    """Sounds mixed under the agent's voice so the call feels like a real office line."""
+
+    room_tone: bool = True
+    typing_while_thinking: bool = True
+    volume: float = Field(default=0.6, ge=0.0, le=1.0)
 
 
 class CallLimits(BaseModel):
@@ -105,6 +123,7 @@ class AgentConfig(BaseModel):
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     gemini_live: GeminiLiveSettings = Field(default_factory=GeminiLiveSettings)
     limits: CallLimits = Field(default_factory=CallLimits)
+    atmosphere: Atmosphere = Field(default_factory=Atmosphere)
 
     @field_validator("languages")
     @classmethod

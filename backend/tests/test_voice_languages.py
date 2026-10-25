@@ -109,12 +109,14 @@ async def test_guard_switches_language_before_the_turn_reaches_the_llm() -> None
             TranscriptionFrame("Hello, yes speaking", "user", "t1", language=Language.EN_IN),
             TranscriptionFrame("ನಾನು ನಾಳೆ ಪಾವತಿಸುತ್ತೇನೆ", "user", "t2"),
             TranscriptionFrame("ಸರಿ", "user", "t3", language=Language.KN_IN),
+            TranscriptionFrame("I.", "user", "t3b", language=Language.EN_IN),  # too short to switch
             TranscriptionFrame("నేను రేపు చెల్లిస్తాను", "user", "t4", language=Language.TE_IN),
         ],
         expected_down_frames=[
             TranscriptionFrame,
             LLMMessagesAppendFrame,
             TTSUpdateSettingsFrame,
+            TranscriptionFrame,
             TranscriptionFrame,
             TranscriptionFrame,
             LLMMessagesAppendFrame,
@@ -154,3 +156,18 @@ def test_missing_details_are_never_left_for_the_model_to_guess() -> None:
     assert greeting is None
     _, greeting = opening_lines(config, {"customer_name": "Asha"}, "en")
     assert greeting is not None and "Asha" in greeting
+
+
+async def test_live_mode_does_not_read_romanised_indic_as_english() -> None:
+    async def on_switch(previous: str | None, current: str) -> None:
+        raise AssertionError("should not switch")
+
+    guard = LanguageGuard(
+        allowed=["en", "kn"], initial="kn", on_switch=on_switch, gemini_live=object()
+    )
+    await run_test(
+        guard,
+        frames_to_send=[TranscriptionFrame("Naanu Ramesh, naanu hana kattuttene", "user", "t1")],
+        expected_down_frames=[TranscriptionFrame],
+    )
+    assert guard.current == "kn"

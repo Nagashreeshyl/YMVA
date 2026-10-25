@@ -9,7 +9,21 @@ import type { AgentDetail } from "@/lib/api";
 import { startBrowserCall, type LiveEvent } from "@/lib/browser-call";
 import { LANGUAGE_NAMES } from "@/lib/format";
 
-type Line = { id: number; who: "caller" | "agent" | "note"; text: string; language: string | null };
+type Line = {
+  id: number;
+  who: "caller" | "agent" | "note";
+  text: string;
+  language: string | null;
+  replySeconds?: number;
+};
+type Conversation = "listening" | "user_speaking" | "thinking" | "agent_speaking";
+
+const CONVERSATION_LABEL: Record<Conversation, string> = {
+  listening: "Listening",
+  user_speaking: "You're speaking",
+  thinking: "Thinking…",
+  agent_speaking: "Agent speaking",
+};
 
 export function TestCall({ agent }: { agent: AgentDetail }) {
   const queryClient = useQueryClient();
@@ -22,7 +36,10 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
   const [lines, setLines] = useState<Line[]>([]);
   const [callId, setCallId] = useState<string | null>(null);
   const [level, setLevel] = useState(0);
-  const [agentSpeaking, setAgentSpeaking] = useState(false);
+  const [conversation, setConversation] = useState<Conversation>("listening");
+  const [partial, setPartial] = useState("");
+  const thinkingSince = useRef<number | null>(null);
+  const lastReply = useRef<number | undefined>(undefined);
   const [seconds, setSeconds] = useState(0);
   const session = useRef<{ stop: () => void } | null>(null);
   const counter = useRef(0);
@@ -38,7 +55,7 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
     // Braces matter: newer browsers return a Promise from scrollIntoView, and an effect
     // must return nothing or a cleanup function.
     bottom.current?.scrollIntoView({ block: "nearest" });
-  }, [lines]);
+  }, [lines, partial]);
 
   const push = (line: Omit<Line, "id">) => setLines((l) => [...l, { ...line, id: ++counter.current }]);
 
@@ -51,11 +68,30 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
       case "error":
         setError(event.content);
         break;
+      case "state":
+        setConversation(event.state);
+        if (event.state === "thinking") thinkingSince.current = performance.now();
+        if (event.state === "agent_speaking" && thinkingSince.current !== null) {
+          lastReply.current = (performance.now() - thinkingSince.current) / 1000;
+          thinkingSince.current = null;
+        }
+        break;
+      case "partial":
+        // Words appear as you speak; the full turn replaces them when you finish.
+        setPartial(event.content);
+        break;
       case "user_turn":
+        setPartial("");
         push({ who: "caller", text: event.content, language: event.language });
         break;
       case "agent_turn":
-        push({ who: "agent", text: event.content, language: event.language });
+        push({
+          who: "agent",
+          text: event.content,
+          language: event.language,
+          replySeconds: lastReply.current,
+        });
+        lastReply.current = undefined;
         break;
       case "language_switch":
         push({ who: "note", text: `Language: ${event.content}`, language: event.language });
@@ -71,16 +107,18 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
     setLines([]);
     setSeconds(0);
     setCallId(null);
+    setPartial("");
+    setConversation("listening");
     setState("connecting");
     try {
       session.current = await startBrowserCall(agent.id, versionId || null, values, {
         onEvent,
         onLevel: setLevel,
-        onAgentSpeaking: setAgentSpeaking,
+        onAgentSpeaking: () => {},
         onClose: (reason) => {
           if (reason) setError(reason);
           setState("ended");
-          setAgentSpeaking(false);
+          setPartial("");
           setLevel(0);
           queryClient.invalidateQueries({ queryKey: ["calls"] });
         },
@@ -170,7 +208,12 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
                     />
                   </span>
                 </span>
-                {agentSpeaking && <span className="text-2xs text-muted">Agent speaking…</span>}
+                <span
+                  className={`text-[13px] ${conversation === "thinking" ? "text-ink" : "text-muted"}`}
+                  aria-live="polite"
+                >
+                  {CONVERSATION_LABEL[conversation]}
+                </span>
               </>
             )}
             {state === "ended" && callId && (
@@ -187,7 +230,7 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
             className="flex max-h-[420px] min-h-40 flex-col gap-2 overflow-y-auto rounded-xl bg-rail p-4"
             aria-live="polite"
           >
-            {lines.length === 0 ? (
+            {lines.length === 0 && !partial ? (
               <p className="m-auto text-[13px] text-muted">
                 {live ? "Listening… say hello." : "The conversation will appear here as you talk."}
               </p>
@@ -205,6 +248,7 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
                     <p className="mb-0.5 text-2xs text-muted">
                       {l.who === "agent" ? "Agent" : "You"}
                       {l.language && ` · ${LANGUAGE_NAMES[l.language] ?? l.language}`}
+                      {l.replySeconds !== undefined && ` · replied in ${l.replySeconds.toFixed(1)} s`}
                     </p>
                     <p
                       className={
@@ -218,6 +262,14 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
                   </div>
                 ),
               )
+            )}
+            {partial && (
+              <div className="max-w-[85%] self-end opacity-60">
+                <p className="mb-0.5 text-right text-2xs text-muted">You · speaking</p>
+                <p className="rounded-2xl rounded-tr-md border border-dashed border-line-strong px-3.5 py-2">
+                  {partial}
+                </p>
+              </div>
             )}
             <div ref={bottom} />
           </div>
