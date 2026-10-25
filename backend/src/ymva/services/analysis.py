@@ -1,0 +1,132 @@
+"""After-call analysis: a short summary, the call's outcome and the details the agent tracks,
+read from the transcript by Gemini and stored on the call."""
+
+import asyncio
+import uuid
+from typing import Any, Literal
+from zoneinfo import ZoneInfo
+
+from google.genai import types
+from pydantic import BaseModel, Field, ValidationError, create_model
+from sqlalchemy import select
+
+from ymva.config import get_settings
+from ymva.db import get_sessionmaker
+from ymva.logging import get_logger
+from ymva.models import Call, CallEvent, CallEventType
+from ymva.services.builder import ask_gemini
+from ymva.services.integrations import load_ai_keys
+from ymva.voice.config import AgentConfig, Analysis
+
+log = get_logger(__name__)
+
+NO_CONVERSATION = "No conversation"
+OTHER = "Other"
+
+SYSTEM = """\
+You read the transcript of a phone call between a voice agent from Yellow Metal (a gold loan
+company in India) and a customer, and write down what happened.
+- summary: one to three short, plain English sentences a manager can read in five seconds,
+  whatever language the call was in. Say what the customer said and agreed to.
+- outcome: the single option that fits best; "Other" only if none fits.
+- details: only details the customer actually said. Leave out anything not said; never guess.
+  Write dates as YYYY-MM-DD, working out words like "tomorrow" or "the 20th" from the call
+  date. Keep each value short."""
+
+# Calls still being analysed; holding them stops the tasks being garbage-collected.
+_running: set[asyncio.Task[None]] = set()
+
+
+def _result_model(analysis: Analysis) -> type[BaseModel]:
+    # Built per agent so Gemini can only answer with that agent's own outcome and detail names.
+    outcomes: Any = Literal[tuple(dict.fromkeys([o.name for o in analysis.outcomes] + [OTHER]))]
+    fields: dict[str, Any] = {"summary": (str, ...), "outcome": (outcomes, ...)}
+    if analysis.details:
+        names: Any = Literal[tuple(d.name for d in analysis.details)]
+        detail: Any = create_model("Detail", name=(names, ...), value=(str, ...))
+        fields["details"] = (list[detail], Field(default_factory=list))
+    return create_model("CallAnalysis", **fields)
+
+
+def _text(text: str) -> types.Content:
+    return types.Content(role="user", parts=[types.Part(text=text)])
+
+
+def _prompt(call: Call, analysis: Analysis, transcript: list[str]) -> str:
+    when = (call.started_at or call.created_at).astimezone(ZoneInfo(get_settings().timezone))
+    lines = [f"Call date: {when:%A, %d %B %Y}"]
+    known = {k: v for k, v in (call.variables or {}).items() if v}
+    if known:
+        lines.append(
+            "Customer details the agent had: " + "; ".join(f"{k}: {v}" for k, v in known.items())
+        )
+    lines.append("Outcome options:")
+    lines += [f"- {o.name}: {o.description}" for o in analysis.outcomes]
+    lines.append(f"- {OTHER}: none of the above")
+    if analysis.details:
+        lines.append("Details to write down if the customer said them:")
+        lines += [f"- {d.name}: {d.description}" for d in analysis.details]
+    lines.append("\nTranscript:")
+    lines += transcript
+    return "\n".join(lines)
+
+
+async def analyze_call(call_id: uuid.UUID) -> None:
+    async with get_sessionmaker()() as db:
+        call = await db.get(Call, call_id)
+        if call is None:
+            return
+        events = await db.scalars(
+            select(CallEvent)
+            .where(
+                CallEvent.call_id == call_id,
+                CallEvent.type.in_([CallEventType.USER_TURN, CallEventType.AGENT_TURN]),
+            )
+            .order_by(CallEvent.seq)
+        )
+        transcript = [
+            f"{'Customer' if e.type == CallEventType.USER_TURN else 'Agent'}: {e.content}"
+            for e in events
+        ]
+        if not any(line.startswith("Customer:") for line in transcript):
+            call.outcome = NO_CONVERSATION
+            call.summary = "The customer didn't say anything."
+            call.extracted = {}
+            await db.commit()
+            return
+        try:
+            analysis = AgentConfig.model_validate(call.agent_config).analysis
+        except ValidationError:
+            analysis = Analysis()  # calls made before analysis existed
+        keys = await load_ai_keys(db)
+        if "google" not in keys:
+            return
+        model = _result_model(analysis)
+        try:
+            result = await ask_gemini(
+                keys["google"],
+                SYSTEM,
+                [
+                    types.Content(
+                        role="user", parts=[types.Part(text=_prompt(call, analysis, transcript))]
+                    )
+                ],
+                model,
+            )
+        except Exception as exc:
+            log.warning("call analysis failed", call_id=str(call_id), error=str(exc)[:300])
+            return
+        data = result.model_dump()
+        call.summary = data["summary"].strip()[:2000]
+        call.outcome = data["outcome"]
+        call.extracted = {
+            d["name"]: d["value"].strip() for d in data.get("details", []) if d["value"].strip()
+        }
+        await db.commit()
+
+
+def schedule(call_id: uuid.UUID) -> None:
+    """Analyse the call in the background, after it has ended."""
+    task = asyncio.create_task(analyze_call(call_id))
+    _running.add(task)
+    task.add_done_callback(_running.discard)

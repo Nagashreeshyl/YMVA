@@ -2,10 +2,11 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { Field, Input, Panel, Segmented, Select, Switch, Textarea } from "@/components/ui";
+import { Plus, X } from "lucide-react";
+import { Button, Field, Input, Panel, Segmented, Select, Switch, Textarea } from "@/components/ui";
 import { VoicePicker } from "@/components/voice-picker";
 import { detectVariables, variableLabel } from "@/lib/variables";
-import { api, type AgentConfig, type AgentDetail, type AgentOptions } from "@/lib/api";
+import { api, type AgentConfig, type AgentDetail, type AgentOptions, type TrackedItem } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
 type Updater = (draft: AgentConfig) => void;
@@ -429,6 +430,30 @@ export function AgentEditor({
         )}
       </Panel>
 
+      <Panel
+        title="After the call"
+        description="When a call ends, its transcript is read and a short summary, one outcome and these details are saved on the call. Outcomes are counted on the Overview."
+      >
+        <div className="flex flex-col gap-6">
+          <TrackedList
+            label="Outcomes"
+            hint="Each call gets the one that fits best, or Other."
+            items={draft.analysis.outcomes}
+            namePlaceholder="e.g. Promised to pay"
+            descriptionPlaceholder="When it applies, e.g. Gave a date to pay"
+            onChange={(items) => update((d) => void (d.analysis.outcomes = items))}
+          />
+          <TrackedList
+            label="Details to write down"
+            hint="Saved only when the customer actually says them."
+            items={draft.analysis.details}
+            namePlaceholder="e.g. Promised payment date"
+            descriptionPlaceholder="What to write, e.g. The date, as YYYY-MM-DD"
+            onChange={(items) => update((d) => void (d.analysis.details = items))}
+          />
+        </div>
+      </Panel>
+
       <Panel title="Call atmosphere" description="Sounds are added only where a real call would have them.">
         <div className="flex max-w-xl flex-col gap-4">
           <Switch
@@ -495,5 +520,68 @@ export function AgentEditor({
         </div>
       </Panel>
     </fieldset>
+  );
+}
+
+function TrackedList({
+  label,
+  hint,
+  items,
+  namePlaceholder,
+  descriptionPlaceholder,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  items: TrackedItem[];
+  namePlaceholder: string;
+  descriptionPlaceholder: string;
+  onChange: (items: TrackedItem[]) => void;
+}) {
+  const edit = (i: number, change: Partial<TrackedItem>) =>
+    onChange(items.map((item, j) => (j === i ? { ...item, ...change } : item)));
+  return (
+    <div className="flex flex-col gap-2">
+      <div>
+        <h3 className="text-[13px] font-medium">{label}</h3>
+        <p className="text-2xs text-muted">{hint}</p>
+      </div>
+      {items.map((item, i) => (
+        <div key={i} className="grid gap-2 sm:grid-cols-[220px_1fr_auto] sm:items-center">
+          <Input
+            aria-label={`${label} ${i + 1}: name`}
+            maxLength={60}
+            placeholder={namePlaceholder}
+            value={item.name}
+            onChange={(e) => edit(i, { name: e.target.value })}
+          />
+          <Input
+            aria-label={`${label} ${i + 1}: when it applies`}
+            maxLength={300}
+            placeholder={descriptionPlaceholder}
+            value={item.description}
+            onChange={(e) => edit(i, { description: e.target.value })}
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Remove ${item.name || `${label.toLowerCase()} ${i + 1}`}`}
+            onClick={() => onChange(items.filter((_, j) => j !== i))}
+          >
+            <X className="size-4" aria-hidden />
+          </Button>
+        </div>
+      ))}
+      {items.length < 20 && (
+        <Button
+          variant="secondary"
+          size="sm"
+          className="w-fit"
+          onClick={() => onChange([...items, { name: "", description: "" }])}
+        >
+          <Plus className="size-3.5" aria-hidden /> Add
+        </Button>
+      )}
+    </div>
   );
 }

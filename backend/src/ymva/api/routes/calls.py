@@ -35,7 +35,7 @@ from ymva.models import (
     ProviderAccount,
     Role,
 )
-from ymva.services import audit
+from ymva.services import analysis, audit
 from ymva.services.calls import (
     ACTIVE_SESSIONS,
     CallSetupError,
@@ -70,6 +70,7 @@ class CallOut(BaseModel):
     duration_seconds: int | None
     end_reason: str | None
     outcome: str | None
+    summary: str | None
     languages: list[str]
 
 
@@ -86,7 +87,6 @@ class CallDetail(CallOut):
     provider: str | None
     has_recording: bool
     variables: dict[str, Any]
-    summary: str | None
     extracted: dict[str, Any]
     latency: dict[str, Any]
     cost_breakdown: dict[str, Any]
@@ -119,6 +119,7 @@ def _call_out(call: Call, agent_names: dict[uuid.UUID, str]) -> dict[str, Any]:
         "duration_seconds": call.duration_seconds,
         "end_reason": call.end_reason,
         "outcome": call.outcome,
+        "summary": call.summary,
         "languages": call.languages or [],
     }
 
@@ -132,8 +133,11 @@ async def list_calls(
     agent_id: uuid.UUID | None = None,
     direction: CallDirection | None = None,
     call_status: Annotated[CallStatus | None, Query(alias="status")] = None,
+    outcome: Annotated[str | None, Query(max_length=64)] = None,
 ) -> dict[str, Any]:
     query = select(Call)
+    if outcome:
+        query = query.where(Call.outcome == outcome)
     if agent_id:
         query = query.where(Call.agent_id == agent_id)
     if direction:
@@ -177,7 +181,6 @@ async def get_call(call_id: uuid.UUID, _: CurrentUser, db: DbSession) -> CallDet
         provider=account.provider.value if account else None,
         has_recording=bool(call.recording_key),
         variables=call.variables or {},
-        summary=call.summary,
         extracted=call.extracted or {},
         latency=call.latency or {},
         cost_breakdown=call.cost_breakdown or {},
@@ -189,6 +192,16 @@ async def get_call(call_id: uuid.UUID, _: CurrentUser, db: DbSession) -> CallDet
             for e in events
         ],
     )
+
+
+@router.post("/{call_id}/analyze", response_model=CallDetail)
+async def analyze(call_id: uuid.UUID, _: AdminUser, db: DbSession) -> CallDetail:
+    """Write (or rewrite) the call's summary, outcome and details from its transcript."""
+    if await db.get(Call, call_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Call not found")
+    await analysis.analyze_call(call_id)
+    db.expire_all()
+    return await get_call(call_id, _, db)
 
 
 @router.get("/{call_id}/recording")

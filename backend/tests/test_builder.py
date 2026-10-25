@@ -28,7 +28,7 @@ def _fake_gemini(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     async def verify_ai_key(*_: Any) -> None:
         return None
 
-    monkeypatch.setattr(builder, "_generate", generate)
+    monkeypatch.setattr(builder, "ask_gemini", generate)
     monkeypatch.setattr(integrations_service, "verify_ai_key", verify_ai_key)
     return answers
 

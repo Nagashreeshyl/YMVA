@@ -111,6 +111,38 @@ class Atmosphere(BaseModel):
     volume: float = Field(default=0.6, ge=0.0, le=1.0)
 
 
+class TrackedItem(BaseModel):
+    """An outcome or detail read from the transcript after the call, named in plain words."""
+
+    name: str = Field(max_length=60)
+    description: str = Field(default="", max_length=300)
+
+
+class Analysis(BaseModel):
+    """What to write down after every call: a summary, one outcome and the details asked for."""
+
+    outcomes: list[TrackedItem] = Field(
+        default_factory=lambda: [
+            TrackedItem(name="Goal achieved", description="The call did what it was for"),
+            TrackedItem(name="Call back later", description="The caller asked to talk later"),
+            TrackedItem(name="Wrong person", description="Someone other than the customer"),
+            TrackedItem(name="Not interested", description="The caller declined or hung up"),
+        ],
+        max_length=20,
+    )
+    details: list[TrackedItem] = Field(default_factory=list, max_length=20)
+
+    @field_validator("outcomes", "details")
+    @classmethod
+    def _unique_names(cls, items: list[TrackedItem]) -> list[TrackedItem]:
+        # A row still being typed in the editor has no name yet; it's simply not saved.
+        items = [i for i in items if i.name.strip()]
+        names = [i.name.strip().lower() for i in items]
+        if len(names) != len(set(names)):
+            raise ValueError("Each name must be different")
+        return items
+
+
 class CallLimits(BaseModel):
     max_duration_seconds: int = Field(default=600, ge=30, le=3600)
     # Agent says goodbye and hangs up after this much silence from the caller.
@@ -135,6 +167,7 @@ class AgentConfig(BaseModel):
     gemini_live: GeminiLiveSettings = Field(default_factory=GeminiLiveSettings)
     limits: CallLimits = Field(default_factory=CallLimits)
     atmosphere: Atmosphere = Field(default_factory=Atmosphere)
+    analysis: Analysis = Field(default_factory=Analysis)
 
     @field_validator("languages")
     @classmethod

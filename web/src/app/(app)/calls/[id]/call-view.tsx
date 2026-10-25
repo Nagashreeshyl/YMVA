@@ -1,12 +1,12 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Languages, Wrench } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { CallStatusBadge, DirectionLabel } from "@/components/call-status";
 import { RecordingPlayer } from "@/components/recording-player";
-import { Button, ErrorNotice, Panel, Skeleton } from "@/components/ui";
+import { Badge, Button, ErrorNotice, Panel, Skeleton } from "@/components/ui";
 import { api, type CallDetail, type CallEvent } from "@/lib/api";
 import { formatDateTime, formatDuration, formatNumber, humanize, LANGUAGE_NAMES } from "@/lib/format";
 import { useMe } from "@/lib/session";
@@ -82,14 +82,25 @@ function Metric({ label, value, note }: { label: string; value: string; note?: s
 export function CallView() {
   const { id } = useParams<{ id: string }>();
   const { data: me } = useMe();
+  const queryClient = useQueryClient();
   const call = useQuery({
     queryKey: ["call", id],
     queryFn: () => api<CallDetail>(`/calls/${id}`),
-    refetchInterval: (q) => (q.state.data && LIVE.includes(q.state.data.status) ? 2500 : false),
+    // Keep checking while the call is live, and until its summary has been written.
+    refetchInterval: (q) =>
+      q.state.data &&
+      (LIVE.includes(q.state.data.status) ||
+        (!q.state.data.summary && q.state.data.events.length > 0 && Date.now() - Date.parse(q.state.data.ended_at ?? "") < 60_000))
+        ? 2500
+        : false,
   });
   const hangup = useMutation({
     mutationFn: () => api(`/calls/${id}/hangup`, { method: "POST" }),
     onSuccess: () => call.refetch(),
+  });
+  const analyze = useMutation({
+    mutationFn: () => api<CallDetail>(`/calls/${id}/analyze`, { method: "POST" }),
+    onSuccess: (updated) => queryClient.setQueryData(["call", id], updated),
   });
 
   if (call.isPending) return <Skeleton className="h-96 rounded-xl" />;
@@ -147,6 +158,44 @@ export function CallView() {
             src={`/api/calls/${c.id}/recording`}
             downloadName={`call-${c.created_at.slice(0, 10)}-${c.id.slice(0, 8)}.wav`}
           />
+        </Panel>
+      )}
+      {!LIVE.includes(c.status) && (
+        <Panel
+          title="Summary"
+          className="mb-6"
+          actions={
+            me?.role === "admin" && c.events.length > 0 ? (
+              <Button variant="ghost" size="sm" loading={analyze.isPending} onClick={() => analyze.mutate()}>
+                {c.summary ? "Analyse again" : "Analyse now"}
+              </Button>
+            ) : undefined
+          }
+        >
+          {c.summary ? (
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-wrap items-start gap-3">
+                {c.outcome && <Badge tone="gold">{c.outcome}</Badge>}
+                <p className="max-w-[70ch] flex-1">{c.summary}</p>
+              </div>
+              {Object.keys(c.extracted).length > 0 && (
+                <dl className="grid gap-3 sm:grid-cols-3">
+                  {Object.entries(c.extracted).map(([name, value]) => (
+                    <Metric key={name} label={name} value={value} />
+                  ))}
+                </dl>
+              )}
+            </div>
+          ) : (
+            <p className="text-[13px] text-muted">
+              The summary and outcome appear a few seconds after the call ends.
+            </p>
+          )}
+          {analyze.isError && (
+            <div className="mt-3">
+              <ErrorNotice error={analyze.error} />
+            </div>
+          )}
         </Panel>
       )}
       <div className="grid items-start gap-6 lg:grid-cols-[1fr_320px]">

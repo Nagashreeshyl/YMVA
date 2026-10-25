@@ -58,10 +58,13 @@ function Breakdown({
   data,
   label,
   empty,
+  href,
 }: {
   data: Record<string, number>;
   label: (k: string) => string;
   empty: string;
+  /** Makes each row a link, e.g. to the calls with that outcome. */
+  href?: (k: string) => string;
 }) {
   const entries = Object.entries(data).sort((a, b) => b[1] - a[1]);
   const total = entries.reduce((sum, [, n]) => sum + n, 0);
@@ -71,7 +74,13 @@ function Breakdown({
       {entries.map(([key, n]) => (
         <li key={key} className="flex flex-col gap-1.5">
           <div className="flex items-baseline justify-between gap-3 text-[13px]">
-            <span>{label(key)}</span>
+            {href ? (
+              <Link href={href(key)} className="underline-offset-4 hover:underline">
+                {label(key)}
+              </Link>
+            ) : (
+              <span>{label(key)}</span>
+            )}
             <span className="tabular text-muted">
               {formatNumber(n)} · {formatPercent(n / total)}
             </span>
@@ -238,7 +247,8 @@ export default function OverviewPage() {
               <Breakdown
                 data={overview.data.outcomes_7d}
                 label={humanize}
-                empty="Outcomes such as promise-to-pay or callback requested appear here after calls end."
+                href={(outcome) => `/calls?outcome=${encodeURIComponent(outcome)}`}
+                empty="Each call’s outcome, such as promised to pay or call back later, is counted here after it ends."
               />
             </Panel>
             <Panel title="Languages spoken, last 7 days">

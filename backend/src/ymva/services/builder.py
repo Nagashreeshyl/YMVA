@@ -47,6 +47,11 @@ class GreetingSpec(BaseModel):
     text: str = Field(description="The agent's first words in that language")
 
 
+class TrackedSpec(BaseModel):
+    name: str = Field(description="Plain words, e.g. 'Promised to pay'")
+    description: str = ""
+
+
 class VariableSpec(BaseModel):
     name: str = Field(description="snake_case name used as {{name}}")
     description: str = ""
@@ -73,6 +78,8 @@ class AgentSpec(BaseModel):
     silence_timeout_seconds: int
     office_background: bool
     typing_during_tools: bool
+    outcomes: list[TrackedSpec] = Field(description="Possible results of a call, 3-8")
+    details: list[TrackedSpec] = Field(description="Facts to write down after the call")
 
 
 class AssistantResult(BaseModel):
@@ -128,6 +135,11 @@ Greetings: one per agent language, natural and short (introduce the agent and co
 they're speaking to). For "everyday_mix", write them the way people actually talk: the
 Indian-language words in their own script, everyday English words (loan, interest, payment,
 okay, sir) in English letters.
+
+After every call the platform writes a summary, picks one of the agent's outcomes and saves
+the details the customer gave. Write outcomes that match the agent's goal and conditions (for a
+payment reminder: Promised to pay, Already paid, Needs help, Call back later, Wrong person,
+Refused) and the details worth saving (e.g. Promised payment date, as YYYY-MM-DD).
 
 Defaults unless the admin says otherwise: mode pipeline, everyday_mix, languages en, kn, te, hi,
 ta with default en, a female persona named Priya (voice priya / Aoede), announcement off,
@@ -194,6 +206,8 @@ def to_spec(config: AgentConfig, name: str, description: str) -> AgentSpec:
         silence_timeout_seconds=config.limits.silence_timeout_seconds,
         office_background=config.atmosphere.room_tone,
         typing_during_tools=config.atmosphere.typing_while_thinking,
+        outcomes=[TrackedSpec(**o.model_dump()) for o in config.analysis.outcomes],
+        details=[TrackedSpec(**d.model_dump()) for d in config.analysis.details],
     )
 
 
@@ -230,6 +244,10 @@ def from_spec(spec: AgentSpec, base: AgentConfig) -> AgentConfig:
     }
     data["atmosphere"]["room_tone"] = spec.office_background
     data["atmosphere"]["typing_while_thinking"] = spec.typing_during_tools
+    data["analysis"] = {
+        "outcomes": [o.model_dump() for o in spec.outcomes],
+        "details": [d.model_dump() for d in spec.details],
+    }
     return AgentConfig.model_validate(data)
 
 
@@ -239,7 +257,7 @@ def _problems(error: ValidationError) -> str:
     )
 
 
-async def _generate[T: BaseModel](
+async def ask_gemini[T: BaseModel](
     api_key: str, system: str, contents: list[types.Content], schema: type[T]
 ) -> T:
     client = genai.Client(api_key=api_key)
@@ -276,7 +294,7 @@ async def generate_agent(
     """Write a whole agent from the admin's description."""
     contents = [_text("user", f"Design a voice agent from this description:\n\n{brief}")]
     for _ in range(2):
-        spec = await _generate(api_key, GUIDE, contents, AgentSpec)
+        spec = await ask_gemini(api_key, GUIDE, contents, AgentSpec)
         try:
             return spec, from_spec(spec, base)
         except ValidationError as error:
@@ -308,7 +326,7 @@ async def edit_agent(
     )
     system = f"{GUIDE}\n\n{ASSISTANT_RULES}"
     for _ in range(2):
-        result = await _generate(api_key, system, contents, AssistantResult)
+        result = await ask_gemini(api_key, system, contents, AssistantResult)
         if result.agent is None or result.agent == current:
             return result.model_copy(update={"agent": None, "changes": []}), None
         try:

@@ -1,9 +1,10 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ChevronRight, PhoneCall } from "lucide-react";
+import { ChevronRight, PhoneCall, X } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 import { CallStatusBadge, DirectionLabel } from "@/components/call-status";
 import { Button, EmptyState, ErrorNotice, PageHeader, Segmented, Skeleton } from "@/components/ui";
 import { api, type CallSummary, type Page } from "@/lib/api";
@@ -13,13 +14,23 @@ const PAGE_SIZE = 25;
 type Filter = "all" | "outbound" | "inbound" | "web";
 
 export default function CallsPage() {
+  return (
+    <Suspense fallback={<Skeleton className="h-64 rounded-xl" />}>
+      <CallsList />
+    </Suspense>
+  );
+}
+
+function CallsList() {
   const [filter, setFilter] = useState<Filter>("all");
   const [offset, setOffset] = useState(0);
+  // Set by the Overview's outcome links, e.g. /calls?outcome=Promised%20to%20pay
+  const outcome = useSearchParams().get("outcome");
   const calls = useQuery({
-    queryKey: ["calls", filter, offset],
+    queryKey: ["calls", filter, offset, outcome],
     queryFn: () =>
       api<Page<CallSummary>>(
-        `/calls?limit=${PAGE_SIZE}&offset=${offset}${filter === "all" ? "" : `&direction=${filter}`}`,
+        `/calls?limit=${PAGE_SIZE}&offset=${offset}${filter === "all" ? "" : `&direction=${filter}`}${outcome ? `&outcome=${encodeURIComponent(outcome)}` : ""}`,
       ),
     placeholderData: keepPreviousData,
     refetchInterval: (q) =>
@@ -31,7 +42,7 @@ export default function CallsPage() {
   return (
     <>
       <PageHeader title="Calls" description="Every call with its transcript, languages and outcome." />
-      <div className="mb-5">
+      <div className="mb-5 flex flex-wrap items-center gap-3">
         <Segmented
           label="Filter calls"
           value={filter}
@@ -46,6 +57,15 @@ export default function CallsPage() {
             { value: "web", label: "Browser tests" },
           ]}
         />
+        {outcome && (
+          <Link
+            href="/calls"
+            className="inline-flex h-8 items-center gap-1.5 rounded-full bg-gold-soft px-3 text-[13px] font-medium hover:opacity-80"
+          >
+            Outcome: {outcome}
+            <X className="size-3.5" aria-label="Show all outcomes" />
+          </Link>
+        )}
       </div>
       {calls.isPending ? (
         <Skeleton className="h-64 rounded-xl" />
@@ -79,7 +99,9 @@ export default function CallsPage() {
                       {c.languages.length > 0 && (
                         <span>· {c.languages.map((l) => LANGUAGE_NAMES[l] ?? l).join(", ")}</span>
                       )}
+                      {c.outcome && <span className="font-medium text-ink">· {c.outcome}</span>}
                     </span>
+                    {c.summary && <span className="mt-0.5 block truncate text-[13px] text-muted">{c.summary}</span>}
                   </span>
                   <CallStatusBadge status={c.status} />
                   <span className="tabular text-right text-[13px] text-muted">

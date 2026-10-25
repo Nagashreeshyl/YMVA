@@ -170,6 +170,13 @@ export interface AgentConfig {
   gemini_live: { model: string; voice: string; temperature: number };
   limits: { max_duration_seconds: number; silence_timeout_seconds: number };
   atmosphere: { room_tone: boolean; typing_while_thinking: boolean; volume: number };
+  /** Written down after each call: one outcome and any of these details the customer gave. */
+  analysis: { outcomes: TrackedItem[]; details: TrackedItem[] };
+}
+
+export interface TrackedItem {
+  name: string;
+  description: string;
 }
 
 export interface AgentSummary {
@@ -241,6 +248,7 @@ export interface CallSummary {
   duration_seconds: number | null;
   end_reason: string | null;
   outcome: string | null;
+  summary: string | null;
   languages: string[];
 }
 
@@ -259,8 +267,7 @@ export interface CallDetail extends CallSummary {
   provider: string | null;
   has_recording: boolean;
   variables: Record<string, string>;
-  summary: string | null;
-  extracted: Record<string, unknown>;
+  extracted: Record<string, string>;
   latency: Record<string, LatencySummary>;
   cost_breakdown: { usage?: Record<string, number> };
   error: string | null;

@@ -1,6 +1,6 @@
 """Starting points for new agents."""
 
-from ymva.voice.config import AgentConfig, Announcement, Variable
+from ymva.voice.config import AgentConfig, Analysis, Announcement, TrackedItem, Variable
 
 INTEREST_REMINDER_PROMPT = """\
 You are Priya, a friendly and respectful customer care executive calling from Yellow Metal, \
@@ -41,6 +41,29 @@ def interest_reminder() -> AgentConfig:
         default_language="en",
         languages=["en", "kn", "te", "hi", "ta"],
         announcement=Announcement(enabled=False),
+        analysis=Analysis(
+            outcomes=[
+                TrackedItem(name="Promised to pay", description="Gave a date to pay the interest"),
+                TrackedItem(name="Already paid", description="Says the interest is already paid"),
+                TrackedItem(
+                    name="Needs help", description="Facing difficulty or wants a manager to call"
+                ),
+                TrackedItem(name="Call back later", description="Asked to talk at another time"),
+                TrackedItem(name="Wrong person", description="Not the customer"),
+                TrackedItem(name="Refused", description="Won't pay or ended the call"),
+            ],
+            details=[
+                TrackedItem(
+                    name="Promised payment date",
+                    description="The date they will pay, as YYYY-MM-DD",
+                ),
+                TrackedItem(name="Paid on", description="If already paid: when, as YYYY-MM-DD"),
+                TrackedItem(name="Call back at", description="When to call back, if they asked"),
+                TrackedItem(
+                    name="Reason for difficulty", description="Why they can't pay, in brief"
+                ),
+            ],
+        ),
         variables=[
             Variable(name="customer_name", description="Customer's name", example="Ramesh"),
             Variable(name="loan_id", description="Gold loan number", example="YM-10234"),

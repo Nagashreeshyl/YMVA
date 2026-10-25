@@ -41,6 +41,7 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from ymva.config import get_settings
 from ymva.logging import get_logger
 from ymva.models import CallEventType, CallStatus
+from ymva.services import analysis
 from ymva.voice import greeting
 from ymva.voice.ambience import AmbienceMixer
 from ymva.voice.config import AgentConfig
@@ -556,3 +557,4 @@ class CallSession:
                 error=error,
                 recording_key=self.recording.close(),
             )
+            analysis.schedule(self.setup.call_id)
