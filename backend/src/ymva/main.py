@@ -12,7 +12,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from ymva import __version__
-from ymva.api.routes import audit_logs, auth, health, overview, users
+from ymva.api.routes import (
+    agents,
+    audit_logs,
+    auth,
+    calls,
+    health,
+    integrations,
+    numbers,
+    overview,
+    telephony,
+    users,
+)
 from ymva.config import get_settings
 from ymva.db import get_engine, get_sessionmaker
 from ymva.logging import configure_logging, get_logger
@@ -95,7 +106,18 @@ def create_app() -> FastAPI:
         return response
 
     api = APIRouter(prefix="/api")
-    for module in (health, auth, users, audit_logs, overview):
+    for module in (
+        health,
+        auth,
+        users,
+        audit_logs,
+        overview,
+        integrations,
+        numbers,
+        agents,
+        calls,
+        telephony,
+    ):
         api.include_router(module.router)
     app.include_router(api)
     return app

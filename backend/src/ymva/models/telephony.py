@@ -1,8 +1,9 @@
 import uuid
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,6 +30,11 @@ class ProviderAccount(UUIDPk, Timestamps, Base):
     )
     name: Mapped[str] = mapped_column(String(120))
     encrypted_credentials: Mapped[str] = mapped_column(Text)
+    credential_hint: Mapped[str] = mapped_column(String(32), default="")
+    # Secret path segment in webhook URLs, so only this provider can reach them.
+    webhook_secret: Mapped[str] = mapped_column(String(64))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(String(500))
     settings: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     max_concurrent_calls: Mapped[int] = mapped_column(default=10)
     is_active: Mapped[bool] = mapped_column(default=True)

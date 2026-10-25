@@ -23,6 +23,7 @@ On a server with a domain pointed at it, use the domain instead and HTTPS is set
 | Command | What it does |
 |---|---|
 | `./ymva start` | Build and start everything (safe to run again) |
+| `./ymva start --tunnel` | Same, plus a temporary public HTTPS address so phone providers can reach this computer |
 | `./ymva stop` | Stop everything (data is kept) |
 | `./ymva restart` | Apply changes made to `.env` and restart |
 | `./ymva status` | Show what's running |
@@ -32,6 +33,21 @@ On a server with a domain pointed at it, use the domain instead and HTTPS is set
 | `./ymva reset-admin` | Reset the admin account to `ADMIN_EMAIL` / `ADMIN_NAME` / `ADMIN_PASSWORD` in `.env` |
 | `./ymva dev` | Developer mode with hot reload, no Docker (needs local PostgreSQL + Redis) |
 | `./ymva test` | Run all checks and tests |
+
+## Your first calls
+
+1. **Integrations** → paste your **Sarvam** and **Google Gemini** API keys (each is tested when saved).
+2. **Agents** → *New agent* → start from the interest-reminder template. Adjust it, then **Publish**.
+3. **Test in browser** (on the agent page) → talk to it with your microphone. Use Chrome, Edge or Safari, and headphones.
+4. For real phone calls, the server needs a public HTTPS address so Plivo / Vobiz can reach it:
+   - on a server: `./ymva start --domain voice.yellowmetal.co`
+   - from this computer, for testing: `./ymva start --tunnel` (temporary address, changes each restart)
+5. **Integrations** → *Connect account* (Plivo or Vobiz Auth ID + Token) → **Numbers** → add your number and pick
+   the agent that answers it → on the agent page, **Call a phone**.
+6. Every call, transcript and language switch appears in **Calls**.
+
+For incoming calls, open *Inbound setup* on the telephony account and paste the Answer and Hangup URLs into your
+provider's application.
 
 ## Admin account
 
@@ -47,7 +63,9 @@ Forgot the password? Set `ADMIN_PASSWORD` in `.env` and run `./ymva reset-admin`
 
 | Part | Tech | Folder |
 |---|---|---|
-| API (voice runtime with Pipecat arrives in Phase 1) | Python 3.12, FastAPI, SQLAlchemy, Alembic | `backend/` |
+| API and voice runtime | Python 3.12, FastAPI, Pipecat 1.12, SQLAlchemy, Alembic | `backend/` |
+| Speech and AI | Sarvam (speech in Indian languages), Google Gemini / Gemini Live | `backend/src/ymva/voice/` |
+| Telephony | Plivo, Vobiz (more in Phase 5) | `backend/src/ymva/telephony/` |
 | Dashboard | Next.js 16, React 19, Tailwind CSS 4, TanStack Query | `web/` |
 | Database / queue | PostgreSQL 17 (pgvector), Redis | `docker-compose.yml` |
 | HTTPS + routing | Caddy | `deploy/Caddyfile` |

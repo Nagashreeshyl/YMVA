@@ -104,6 +104,16 @@ services:
       api: { condition: service_healthy }
       web: { condition: service_healthy }
 
+  # Optional: free temporary public HTTPS address for testing real calls from this computer.
+  # Started by `./ymva start --tunnel`.
+  tunnel:
+    <<: *defaults
+    image: cloudflare/cloudflared:2026.9.2
+    profiles: ["tunnel"]
+    command: ["tunnel", "--no-autoupdate", "--url", "http://caddy:80"]
+    depends_on:
+      - caddy
+
 volumes:
   postgres-data:
   redis-data:

@@ -2,6 +2,7 @@
 # YMVA — Yellow Metal Voice Agent. One command to run everything.
 #
 #   ./ymva start [--domain voice.example.com]   Build and start the full stack (Docker)
+#   ./ymva start --tunnel                        Same, plus a temporary public HTTPS address for test calls
 #   ./ymva stop | restart | status | logs [service]
 #   ./ymva reset-admin                           Reset admin to ADMIN_EMAIL / ADMIN_PASSWORD in .env
 #   ./ymva update                                Pull latest code and redeploy
@@ -99,10 +100,11 @@ wait_ready() {
 }
 
 cmd_start() {
-  local domain=""
+  local domain="" tunnel=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --domain) domain="${2:-}"; shift 2 ;;
+      --tunnel) tunnel=1; shift ;;
       *) fail "Unknown option: $1" ;;
     esac
   done
@@ -114,8 +116,17 @@ cmd_start() {
     env_set PUBLIC_URL "https://$domain"
     info "Serving on https://$domain (HTTPS certificate is issued automatically)."
   fi
+  if [ "$tunnel" = "0" ] && case "$(env_get TELEPHONY_PUBLIC_URL)" in *trycloudflare.com*) true ;; *) false ;; esac; then
+    env_set TELEPHONY_PUBLIC_URL ""
+    COMPOSE_PROFILES=tunnel compose rm -sf tunnel >/dev/null 2>&1 || true
+  fi
   bold "Starting YMVA..."
-  compose up -d --build --remove-orphans
+  if [ "$tunnel" = "1" ]; then
+    COMPOSE_PROFILES=tunnel compose up -d --build --remove-orphans
+    start_tunnel
+  else
+    compose up -d --build --remove-orphans
+  fi
   if wait_ready; then
     echo
     bold "YMVA is running at $(public_url)"
@@ -127,6 +138,22 @@ cmd_start() {
     compose ps
     fail "YMVA did not become ready in time. See logs with: ./ymva logs api"
   fi
+}
+
+# Reads the quick-tunnel address from cloudflared's log and points telephony webhooks at it.
+start_tunnel() {
+  info "Opening a temporary public address..."
+  local url=""
+  for _ in $(seq 1 45); do
+    url="$(COMPOSE_PROFILES=tunnel compose logs tunnel 2>/dev/null | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1 || true)"
+    [ -n "$url" ] && break
+    sleep 2
+  done
+  [ -n "$url" ] || fail "The tunnel didn't start. See: ./ymva logs tunnel"
+  env_set TELEPHONY_PUBLIC_URL "$url"
+  compose up -d api >/dev/null  # recreate so the API picks up the new address
+  info "Public address for phone providers: $url"
+  info "(It changes every time the tunnel restarts. Use --domain on a server for a permanent one.)"
 }
 
 cmd_backup() {
@@ -213,11 +240,11 @@ cmd_test() {
   bold "All checks passed."
 }
 
-usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; }
 
 case "${1:-}" in
   start) shift; cmd_start "$@" ;;
-  stop) need_docker; compose down ;;
+  stop) need_docker; COMPOSE_PROFILES=tunnel compose down ;;
   restart) cmd_restart ;;
   reset-admin) cmd_reset_admin ;;
   status) need_docker; compose ps ;;

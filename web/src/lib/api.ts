@@ -92,3 +92,152 @@ export interface Page<T> {
   limit: number;
   offset: number;
 }
+
+export interface AIProviderStatus {
+  provider: "sarvam" | "google";
+  label: string;
+  purpose: string;
+  key_url: string;
+  configured: boolean;
+  key_hint: string | null;
+  verified_at: string | null;
+  last_error: string | null;
+}
+
+export interface TelephonyAccount {
+  id: string;
+  provider: "plivo" | "vobiz";
+  name: string;
+  credential_hint: string;
+  is_active: boolean;
+  max_concurrent_calls: number;
+  verified_at: string | null;
+  last_error: string | null;
+  answer_url: string;
+  status_url: string;
+  numbers: number;
+}
+
+export interface Integrations {
+  ai: AIProviderStatus[];
+  telephony: TelephonyAccount[];
+  telephony_providers: string[];
+  public_base_url: string;
+  public_url_is_https: boolean;
+}
+
+export interface PhoneNumber {
+  id: string;
+  e164: string;
+  label: string;
+  provider_account_id: string;
+  provider: string;
+  provider_account_name: string;
+  inbound_agent_id: string | null;
+  inbound_agent_name: string | null;
+  max_concurrent_calls: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AgentVariable {
+  name: string;
+  description: string;
+  example: string;
+}
+
+export interface AgentConfig {
+  mode: "pipeline" | "gemini_live";
+  system_prompt: string;
+  greetings: Record<string, string>;
+  default_language: string;
+  languages: string[];
+  state_languages: Record<string, string>;
+  announcement: { enabled: boolean; text: string; translations: Record<string, string> };
+  variables: AgentVariable[];
+  pipeline: {
+    stt_provider: "sarvam";
+    llm_provider: "google";
+    llm_model: string;
+    tts_provider: "sarvam";
+    voice: string;
+    speaking_pace: number;
+    temperature: number;
+  };
+  gemini_live: { model: string; voice: string; temperature: number };
+  limits: { max_duration_seconds: number; silence_timeout_seconds: number };
+}
+
+export interface AgentSummary {
+  id: string;
+  name: string;
+  description: string;
+  status: "draft" | "active" | "paused" | "archived";
+  mode: "pipeline" | "gemini_live";
+  languages: string[];
+  latest_version: number;
+  published_version: number | null;
+  has_unpublished_changes: boolean;
+  updated_at: string;
+}
+
+export interface AgentDetail extends AgentSummary {
+  config: AgentConfig;
+  latest_version_id: string;
+  published_version_id: string | null;
+  versions: {
+    id: string;
+    version: number;
+    note: string;
+    source: string;
+    created_at: string;
+    created_by: string | null;
+  }[];
+}
+
+export interface AgentOptions {
+  languages: { code: string; name: string; native: string }[];
+  sarvam_voices: string[];
+  gemini_live_voices: string[];
+  llm_models: string[];
+  templates: { id: string; name: string }[];
+}
+
+export interface CallSummary {
+  id: string;
+  created_at: string;
+  direction: "inbound" | "outbound" | "web";
+  status: string;
+  agent_id: string | null;
+  agent_name: string | null;
+  from_number: string | null;
+  to_number: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_seconds: number | null;
+  end_reason: string | null;
+  outcome: string | null;
+  languages: string[];
+}
+
+export interface CallEvent {
+  seq: number;
+  at: string;
+  type: "user_turn" | "agent_turn" | "tool_call" | "tool_result" | "language_switch" | "status" | "error";
+  language: string | null;
+  content: string;
+  data: Record<string, unknown>;
+}
+
+type LatencySummary = { p50_ms: number; p95_ms: number; count: number } | null;
+
+export interface CallDetail extends CallSummary {
+  provider: string | null;
+  variables: Record<string, string>;
+  summary: string | null;
+  extracted: Record<string, unknown>;
+  latency: Record<string, LatencySummary>;
+  cost_breakdown: { usage?: Record<string, number> };
+  error: string | null;
+  events: CallEvent[];
+}

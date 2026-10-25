@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     encryption_key: SecretStr = SecretStr("")
 
     public_url: str = "http://localhost:3000"
+    # Public HTTPS address telephony providers use to reach webhooks and media streams.
+    # Defaults to PUBLIC_URL; set separately when calls come in through a tunnel.
+    telephony_public_url: str = ""
+    # Safety cap on simultaneous calls handled by this server.
+    max_concurrent_calls: int = 20
     session_ttl_hours: int = 12
     # Defaults to true whenever PUBLIC_URL is https.
     cookie_secure: bool | None = None

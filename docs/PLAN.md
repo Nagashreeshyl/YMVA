@@ -1,6 +1,6 @@
 # YMVA — Yellow Metal Voice Agent: Architecture & Build Plan
 
-Status: Phase 0 (foundation) built 2026-10-25 · next: Phase 1 (voice core)
+Status: Phase 0 and Phase 1 (voice core) built 2026-10-25 · Phase 1 awaits real-call testing with API keys · next: Phase 2 (agent builder)
 Decisions locked: fresh project on **Pipecat** (not a Dograh fork; Dograh is reference only).
 
 ---

@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useMe } from "@/lib/session";
 import { Skeleton } from "./ui";
@@ -51,12 +51,11 @@ function Wordmark() {
   );
 }
 
-function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
-  const pathname = usePathname();
+function NavList({ pathname, onNavigate }: { pathname: string | null; onNavigate?: () => void }) {
   return (
     <nav aria-label="Main" className="flex flex-col gap-0.5">
       {NAV.map(({ href, label, icon: Icon }) => {
-        const active = isActive(pathname, href);
+        const active = pathname !== null && isActive(pathname, href);
         return (
           <Link
             key={href}
@@ -81,6 +80,19 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
         );
       })}
     </nav>
+  );
+}
+
+function CurrentNav({ onNavigate }: { onNavigate?: () => void }) {
+  return <NavList pathname={usePathname()} onNavigate={onNavigate} />;
+}
+
+// The current path is request-time data; the fallback renders the same menu without highlighting.
+function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <Suspense fallback={<NavList pathname={null} onNavigate={onNavigate} />}>
+      <CurrentNav onNavigate={onNavigate} />
+    </Suspense>
   );
 }
 
