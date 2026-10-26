@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     recordings_dir: str = "data/recordings"
     # Safety cap on simultaneous calls handled by this server.
     max_concurrent_calls: int = 20
+    # Campaign dialer runs inside the API process (one dials at a time, via a Redis lock).
+    dialer_enabled: bool = True
     session_ttl_hours: int = 12
     # Defaults to true whenever PUBLIC_URL is https.
     cookie_secure: bool | None = None

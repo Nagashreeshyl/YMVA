@@ -23,6 +23,10 @@ class CallSetupError(Exception):
     """Reason a call can't start; safe to show to admins."""
 
 
+class LinesBusyError(CallSetupError):
+    """The platform-wide concurrent call limit is reached; try again shortly."""
+
+
 async def runnable_version(
     session: AsyncSession, agent: Agent, *, draft: bool = False
 ) -> tuple[AgentVersion, AgentConfig]:
@@ -52,7 +56,7 @@ async def check_capacity(session: AsyncSession) -> None:
         select(func.count()).select_from(Call).where(Call.status == CallStatus.IN_PROGRESS)
     )
     if (in_progress or 0) >= get_settings().max_concurrent_calls:
-        raise CallSetupError("All lines are busy right now (concurrent call limit reached).")
+        raise LinesBusyError("All lines are busy right now (concurrent call limit reached).")
 
 
 async def issue_stream_token(call_id: uuid.UUID) -> str:

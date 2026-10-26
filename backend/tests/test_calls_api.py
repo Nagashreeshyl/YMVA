@@ -26,7 +26,7 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 
     async def place_call(self: Any, **kwargs: Any) -> PlacedCall:
         placed.append(kwargs)
-        return PlacedCall(provider_call_id="req-1")
+        return PlacedCall(provider_call_id=f"req-{len(placed)}")  # unique, like real providers
 
     async def no_greeting(*_: Any) -> None:
         return None

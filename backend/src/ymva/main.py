@@ -1,5 +1,6 @@
 """FastAPI application factory."""
 
+import asyncio
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -18,6 +19,7 @@ from ymva.api.routes import (
     auth,
     builder,
     calls,
+    campaigns,
     health,
     integrations,
     numbers,
@@ -30,6 +32,7 @@ from ymva.config import get_settings
 from ymva.db import get_engine, get_sessionmaker
 from ymva.logging import configure_logging, get_logger
 from ymva.redis import get_redis
+from ymva.services import dialer
 from ymva.services.bootstrap import ensure_admin
 
 log = get_logger(__name__)
@@ -43,7 +46,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     async with get_sessionmaker()() as session:
         await ensure_admin(session)
     log.info("ymva api started", version=__version__, environment=get_settings().environment)
+    dialer_task = (
+        asyncio.create_task(dialer.run_forever()) if get_settings().dialer_enabled else None
+    )
     yield
+    if dialer_task:
+        dialer_task.cancel()
     await get_redis().aclose()
     await get_engine().dispose()
 
@@ -119,6 +127,7 @@ def create_app() -> FastAPI:
         agents,
         builder,
         calls,
+        campaigns,
         tools,
         telephony,
     ):
