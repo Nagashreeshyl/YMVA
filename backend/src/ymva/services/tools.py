@@ -57,7 +57,8 @@ class SheetColumn(BaseModel):
 
 class SheetsConfig(BaseModel):
     spreadsheet: str = Field(min_length=10, max_length=300)  # the sheet's link or ID
-    sheet: str = Field(default="Sheet1", min_length=1, max_length=100)  # tab name
+    # Tab name; empty means the tab in the link (#gid=...), else the first tab.
+    sheet: str = Field(default="", max_length=100)
     action: Literal["append_row", "find_row"] = "append_row"
     columns: list[SheetColumn] = Field(default_factory=list, max_length=50)
     match_column: str = Field(default="", max_length=100)
@@ -67,6 +68,11 @@ class SheetsConfig(BaseModel):
     def spreadsheet_id(self) -> str:
         found = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", self.spreadsheet)
         return found.group(1) if found else self.spreadsheet.strip()
+
+    @property
+    def gid(self) -> int | None:
+        found = re.search(r"[#&?]gid=(\d+)", self.spreadsheet)
+        return int(found.group(1)) if found else None
 
 
 class HttpConfig(BaseModel):
@@ -180,34 +186,68 @@ async def _sheets_token(service_account: dict[str, Any]) -> str:
     return str(creds.token)
 
 
-def _sheets_error(response: httpx.Response, config: SheetsConfig, email: str) -> ToolError:
+def _sheets_error(response: httpx.Response, email: str) -> ToolError:
     if response.status_code in (403, 404):
         return ToolError(
-            f"Can't open the sheet. Share it with {email} as an editor, and check the link "
-            f"and the tab name '{config.sheet}'."
+            f"Can't open the sheet. Share it with {email} as an editor and check the link."
         )
-    return ToolError(f"Google Sheets answered {response.status_code}")
+    try:
+        detail = response.json()["error"]["message"]
+    except (ValueError, KeyError, TypeError):
+        detail = response.text[:200]
+    return ToolError(f"Google Sheets answered {response.status_code}: {detail}")
+
+
+async def _tab(client: httpx.AsyncClient, config: SheetsConfig, email: str) -> str:
+    """The tab to use: the one named, else the one in the link, else the first."""
+    meta = await client.get(
+        f"{SHEETS_API}/{config.spreadsheet_id}", params={"fields": "sheets.properties"}
+    )
+    if meta.is_error:
+        raise _sheets_error(meta, email)
+    tabs = [s["properties"] for s in meta.json().get("sheets", [])]
+    if config.sheet.strip():
+        if not any(t["title"] == config.sheet.strip() for t in tabs):
+            names = ", ".join(t["title"] for t in tabs)
+            raise ToolError(f"The sheet has no tab named '{config.sheet}'. Its tabs: {names}")
+        return config.sheet.strip()
+    by_gid = [t["title"] for t in tabs if t.get("sheetId") == config.gid]
+    return str(by_gid[0] if by_gid else tabs[0]["title"])
 
 
 async def _run_sheets(
     config: SheetsConfig, secrets: dict[str, Any], values: dict[str, str]
 ) -> dict[str, Any]:
+    if not secrets.get("service_account"):
+        raise ToolError(
+            "This tool has no Google service account key yet. Paste the key in the tool and "
+            "share the sheet with the key's email as an editor."
+        )
     account = SheetsSecrets.model_validate(secrets).service_account
+    email = account["client_email"]
     token = await _sheets_token(account)
-    tab = quote(f"'{config.sheet}'", safe="")
     base = f"{SHEETS_API}/{config.spreadsheet_id}/values"
     headers = {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient(timeout=TOOL_TIMEOUT_SECS, headers=headers) as client:
+        tab = quote(f"'{await _tab(client, config, email)}'", safe="")
         if config.action == "append_row":
-            # Values go under the matching header, so column order in the sheet doesn't matter.
+            # Values go under the matching column title, so column order doesn't matter.
             first = await client.get(f"{base}/{tab}!1:1")
             if first.is_error:
-                raise _sheets_error(first, config, account["client_email"])
+                raise _sheets_error(first, email)
             sheet_headers = [h.strip() for h in (first.json().get("values") or [[]])[0]]
             wanted = {c.header.strip(): render(c.value, values, missing="") for c in config.columns}
             missing = [h for h in wanted if h not in sheet_headers]
             if missing:
-                raise ToolError(f"The sheet has no column named {', '.join(missing)}")
+                # An empty sheet gets its title row; new columns are added after the last one.
+                sheet_headers += missing
+                titled = await client.put(
+                    f"{base}/{tab}!1:1",
+                    params={"valueInputOption": "RAW"},
+                    json={"values": [sheet_headers]},
+                )
+                if titled.is_error:
+                    raise _sheets_error(titled, email)
             row = [wanted.get(h, "") for h in sheet_headers]
             added = await client.post(
                 f"{base}/{tab}!A1:append",
@@ -215,14 +255,14 @@ async def _run_sheets(
                 json={"values": [row]},
             )
             if added.is_error:
-                raise _sheets_error(added, config, account["client_email"])
+                raise _sheets_error(added, email)
             return {"ok": True, "saved": {h: v for h, v in wanted.items() if v}}
 
         # shortcut: reads the whole tab, fine up to tens of thousands of rows; past that use
         # a database tool.
         sheet = await client.get(f"{base}/{tab}")
         if sheet.is_error:
-            raise _sheets_error(sheet, config, account["client_email"])
+            raise _sheets_error(sheet, email)
         rows = sheet.json().get("values") or []
         if not rows:
             return {"ok": True, "found": False}
@@ -310,6 +350,8 @@ async def _run_database(
 ) -> dict[str, Any]:
     import asyncpg  # type: ignore[import-untyped]
 
+    if not secrets.get("connection"):
+        raise ToolError("This tool has no database connection yet. Add it in the tool.")
     url = DatabaseSecrets.model_validate(secrets).connection
     sql, names = _bind(config.query)
     try:
@@ -419,7 +461,12 @@ async def _run_mcp(
     text = "\n".join(getattr(c, "text", "") for c in result.content).strip()
     if result.is_error:
         raise ToolError(text[:300] or "The MCP tool reported an error")
-    answer: Any = result.structured_content or text
+    answer: Any = result.structured_content
+    if not answer:
+        try:
+            answer = json.loads(text)  # many servers send JSON as text
+        except ValueError:
+            answer = text
     return {"ok": True, "response": answer}
 
 
@@ -446,8 +493,11 @@ async def run_tool(
         )
     except ToolError as exc:
         return {"ok": False, "error": str(exc)}
-    except (ValidationError, KeyError) as exc:
-        return {"ok": False, "error": f"The tool isn't set up correctly: {exc}"}
+    except ValidationError as exc:
+        problems = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
+        return {"ok": False, "error": f"The tool isn't set up correctly ({problems})"}
+    except KeyError as exc:
+        return {"ok": False, "error": f"Unknown tool type {exc}"}
     except TimeoutError:
         return {"ok": False, "error": "The service took too long to answer"}
     except httpx.HTTPError as exc:

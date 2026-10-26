@@ -1,6 +1,7 @@
 """Runs one call: builds the Pipecat pipeline for the agent's mode and drives it to the end."""
 
 import asyncio
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -118,6 +119,9 @@ HANG_UP_GRACE_SECS = 1.5
 # voice starts after the model's first few words instead of a whole sentence later.
 TTS_START_CHARS = 30
 LLM_RETRY_AFTER_SECS = 2.0
+# Gemini Live: caller finished but no reply or tool use for this long counts as a stall.
+STALL_SECS = 5.0
+MAX_STALL_RECOVERIES = 3
 LLM_GIVE_UP_AFTER_SECS = 5.0
 
 
@@ -199,6 +203,18 @@ class CallSession:
         )
         if self._ending is None or self._ending.done():
             self._ending = asyncio.create_task(self._hang_up_after_goodbye(reason))
+
+    async def _watch_for_stalls(self) -> None:
+        """Gemini Live: if the caller has finished and nothing happens for a while, recover."""
+        recoveries = 0
+        while recoveries < MAX_STALL_RECOVERIES:
+            await asyncio.sleep(0.5)
+            state = self.conversation
+            quiet_for = time.monotonic() - state.last_activity
+            if state.state == "thinking" and not state.bot_speaking and quiet_for > STALL_SECS:
+                recoveries += 1
+                state.last_activity = time.monotonic()  # one recovery per silence
+                await self._live_llm.recover_stall()
 
     async def _run_tool(self, params: FunctionCallParams) -> None:
         tool = next(t for t in self.setup.tools if t.name == params.function_name)
@@ -551,6 +567,7 @@ class CallSession:
             data={"mode": config.mode, "opening_language": self.opening},
         )
         warm_up: asyncio.Task[None] | None = None
+        watchdog: asyncio.Task[None] | None = None
         opening: asyncio.Task[None] | None = None
         if config.mode == "pipeline":
             # Runs alongside pipeline start-up, so waiting for the prepared greeting costs nothing.
@@ -559,6 +576,7 @@ class CallSession:
         else:
             # Gemini greets first: with the prepared greeting if ready, otherwise by itself.
             opening = asyncio.create_task(self._open_live_mode(context))
+            watchdog = asyncio.create_task(self._watch_for_stalls())
 
         limit = asyncio.create_task(_limit())
         try:
@@ -569,7 +587,7 @@ class CallSession:
             log.exception("call pipeline failed", call_id=str(self.setup.call_id))
         finally:
             limit.cancel()
-            for background in (warm_up, opening, self._ending):
+            for background in (warm_up, watchdog, opening, self._ending):
                 if background is not None:
                     background.cancel()
             await self.recorder.event(

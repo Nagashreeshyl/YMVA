@@ -4,6 +4,7 @@ from typing import Any
 import httpx
 import pytest
 
+from tests.fake_sheets import FakeSheets
 from ymva.services import tools as tools_service
 
 SERVICE_ACCOUNT = {
@@ -14,20 +15,19 @@ SERVICE_ACCOUNT = {
 
 
 @pytest.fixture
-def requests_seen(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Request]:
-    """Every outgoing tool request, answered by a fake Google Sheets / web service."""
+def sheets() -> FakeSheets:
+    return FakeSheets({"Sheet1": [["Loan ID", "Promised date", "Called at"]], "Loans": []})
+
+
+@pytest.fixture
+def requests_seen(monkeypatch: pytest.MonkeyPatch, sheets: FakeSheets) -> list[httpx.Request]:
+    """Every outgoing tool request: Sheets calls go to a fake Sheets API, the rest echo back."""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
-        if request.url.path.endswith("!1:1"):
-            return httpx.Response(200, json={"values": [["Loan ID", "Promised date", "Called at"]]})
-        if ":append" in request.url.path:
-            return httpx.Response(200, json={"updates": {"updatedRows": 1}})
-        if "spreadsheets" in request.url.host or "sheets" in request.url.host:
-            return httpx.Response(
-                200, json={"values": [["Loan ID", "Branch"], ["YM1", "Hubli"], ["YM2", "Mysuru"]]}
-            )
+        if request.url.host == "sheets.googleapis.com":
+            return sheets.handle(request)
         return httpx.Response(200, json={"received": json.loads(request.content or b"null")})
 
     real = httpx.AsyncClient
@@ -61,7 +61,7 @@ SHEET_TOOL = {
 
 
 async def test_sheet_tool_adds_row_under_matching_headers(
-    admin_client: httpx.AsyncClient, requests_seen: list[httpx.Request]
+    admin_client: httpx.AsyncClient, requests_seen: list[httpx.Request], sheets: FakeSheets
 ) -> None:
     resp = await admin_client.post("/api/tools", json=SHEET_TOOL)
     assert resp.status_code == 201, resp.text
@@ -74,27 +74,49 @@ async def test_sheet_tool_adds_row_under_matching_headers(
         json={"values": {"promised_date": "2026-11-20", "loan_id": "YM1"}},
     )
     assert resp.json()["ok"], resp.json()
-    append = requests_seen[-1]
-    assert "/1AbCdEfGhIjK/" in append.url.path  # ID taken from the pasted link
+    assert "/1AbCdEfGhIjK" in requests_seen[-1].url.path  # ID taken from the pasted link
     # Sheet order is Loan ID, Promised date, Called at; unmapped columns stay empty.
-    assert json.loads(append.content)["values"] == [["YM1", "2026-11-20", ""]]
+    assert sheets.tabs["Sheet1"][-1] == ["YM1", "2026-11-20", ""]
 
 
-async def test_sheet_tool_reports_missing_column(
+async def test_sheet_tool_titles_an_empty_sheet_and_adds_new_columns(
+    requests_seen: list[httpx.Request], sheets: FakeSheets
+) -> None:
+    config = {**SHEET_TOOL["config"], "sheet": "Loans"}
+    secrets = {"service_account": SERVICE_ACCOUNT}
+    values = {"promised_date": "2026-11-20", "loan_id": "YM1"}
+    assert (await tools_service.run_tool("google_sheets", config, secrets, values))["ok"]
+    assert sheets.tabs["Loans"] == [["Promised date", "Loan ID"], ["2026-11-20", "YM1"]]
+
+    config["columns"] = [*config["columns"], {"header": "Amount", "value": "2450"}]
+    assert (await tools_service.run_tool("google_sheets", config, secrets, values))["ok"]
+    assert sheets.tabs["Loans"][0] == ["Promised date", "Loan ID", "Amount"]
+    assert sheets.tabs["Loans"][-1] == ["2026-11-20", "YM1", "2450"]
+
+
+async def test_sheet_tool_explains_setup_problems(
     admin_client: httpx.AsyncClient, requests_seen: list[httpx.Request]
 ) -> None:
-    body = json.loads(json.dumps(SHEET_TOOL))
-    body["config"]["columns"].append({"header": "Amount", "value": "x"})
-    tool = (await admin_client.post("/api/tools", json=body)).json()
+    no_key = {**SHEET_TOOL, "secrets": None}
+    tool = (await admin_client.post("/api/tools", json=no_key)).json()
     result = (await admin_client.post(f"/api/tools/{tool['id']}/test", json={})).json()
-    assert result == {"ok": False, "error": "The sheet has no column named Amount"}
+    assert not result["ok"] and "no Google service account key" in result["error"]
+
+    config = {**SHEET_TOOL["config"], "sheet": "Payments"}
+    result = await tools_service.run_tool(
+        "google_sheets", config, {"service_account": SERVICE_ACCOUNT}, {}
+    )
+    assert result["error"] == "The sheet has no tab named 'Payments'. Its tabs: Sheet1, Loans"
 
 
-async def test_sheet_lookup_finds_row(requests_seen: list[httpx.Request]) -> None:
+async def test_sheet_lookup_finds_row(
+    requests_seen: list[httpx.Request], sheets: FakeSheets
+) -> None:
+    sheets.tabs["Loans"] = [["Loan ID", "Branch"], ["YM1", "Hubli"], ["YM2", "Mysuru"]]
     result = await tools_service.run_tool(
         "google_sheets",
         {
-            "spreadsheet": "1AbCdEfGhIjK",
+            "spreadsheet": "https://docs.google.com/spreadsheets/d/1AbCdEfGhIjK/edit#gid=1",
             "action": "find_row",
             "match_column": "Loan ID",
             "match_value": "{{loan_id}}",
@@ -102,6 +124,7 @@ async def test_sheet_lookup_finds_row(requests_seen: list[httpx.Request]) -> Non
         {"service_account": SERVICE_ACCOUNT},
         {"loan_id": "ym2"},
     )
+    # No tab named: the one in the link (gid=1, "Loans") is used.
     assert result == {"ok": True, "found": True, "row": {"Loan ID": "YM2", "Branch": "Mysuru"}}
 
 

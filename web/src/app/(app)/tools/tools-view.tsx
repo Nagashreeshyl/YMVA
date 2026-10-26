@@ -51,7 +51,7 @@ type Draft = Omit<
 
 const NEW_SHEET: SheetsToolConfig = {
   spreadsheet: "",
-  sheet: "Sheet1",
+  sheet: "",
   action: "append_row",
   columns: [{ header: "", value: "" }],
   match_column: "",
@@ -566,10 +566,11 @@ function ToolForm({
                   />
                 )}
               </Field>
-              <Field label="Tab">
+              <Field label="Tab" hint="Optional. Empty: the tab in the link.">
                 {(p) => (
                   <Input
                     {...p}
+                    placeholder="Tab in the link"
                     value={sheet.sheet}
                     onChange={(e) => setConfig({ sheet: e.target.value })}
                   />
@@ -596,7 +597,9 @@ function ToolForm({
               <div className="flex flex-col gap-2">
                 <p className="text-[13px] font-medium">Columns to fill</p>
                 <p className="text-2xs text-muted">
-                  Column titles must match the sheet&apos;s first row.
+                  Values go under the matching title in the sheet&apos;s first
+                  row. Missing titles are added for you, so an empty sheet works
+                  too.
                 </p>
                 {sheet.columns.map((col, i) => (
                   <div

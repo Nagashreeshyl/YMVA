@@ -3,6 +3,7 @@
 import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request, status
 from google.genai import types
@@ -11,6 +12,7 @@ from sqlalchemy import select
 
 from ymva.api.deps import AdminUser, CurrentUser, DbSession, client_ip
 from ymva.api.routes.agents import _latest
+from ymva.config import get_settings
 from ymva.models import Agent, AgentVersion, Tool, ToolType
 from ymva.redis import get_redis
 from ymva.security import decrypt_json, encrypt_json
@@ -288,7 +290,8 @@ async def test_tool(
 ) -> dict[str, Any]:
     """Run the tool for real with sample values (a test row really is added)."""
     tool = await _get(db, tool_id)
-    values = call_facts(datetime.now(UTC), body.values.get("customer_phone")) | body.values
+    now = datetime.now(ZoneInfo(get_settings().timezone))  # same clock as real calls
+    values = call_facts(now, body.values.get("customer_phone")) | body.values
     result = await run_tool(tool.type.value, tool.config, _secrets(tool), values)
     await audit.record(
         db,

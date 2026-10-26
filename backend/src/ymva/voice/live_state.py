@@ -1,6 +1,7 @@
 """Tracks who is talking, drives the typing sound while the agent uses a tool, and (for browser
 tests) streams the conversation state and live transcript to the dashboard."""
 
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -32,6 +33,9 @@ class ConversationState(BaseObserver):
         self._state = "listening"
         # Whether the agent has started speaking since the caller's last turn.
         self.agent_replied = False
+        self.bot_speaking = False
+        # Last time anything happened (someone spoke, a tool ran); for spotting a stuck model.
+        self.last_activity = time.monotonic()
 
     @property
     def state(self) -> str:
@@ -40,6 +44,7 @@ class ConversationState(BaseObserver):
     async def _set(self, state: str) -> None:
         if self._mixer is not None:
             self._mixer.thinking = state == "using_tool"
+        self.last_activity = time.monotonic()
         if state != self._state:
             self._state = state
             if self._emit:
@@ -59,11 +64,14 @@ class ConversationState(BaseObserver):
                 await self._set("using_tool")
         elif isinstance(frame, FunctionCallResultFrame):
             if self._state == "using_tool":
-                await self._set("thinking")
+                # The agent may have kept talking while the tool ran.
+                await self._set("agent_speaking" if self.bot_speaking else "thinking")
         elif isinstance(frame, BotStartedSpeakingFrame):
-            self.agent_replied = True
+            self.agent_replied = self.bot_speaking = True
             await self._set("agent_speaking")
         elif isinstance(frame, BotStoppedSpeakingFrame):
+            self.bot_speaking = False
+            self.last_activity = time.monotonic()
             if self._state == "agent_speaking":
                 await self._set("listening")
         elif (
