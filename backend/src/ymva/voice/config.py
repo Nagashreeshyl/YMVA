@@ -121,16 +121,31 @@ class TrackedItem(BaseModel):
 class Analysis(BaseModel):
     """What to write down after every call: a summary, one outcome and the details asked for."""
 
+    # Every agent starts with the same payment-call set, so outcomes add up across agents.
     outcomes: list[TrackedItem] = Field(
         default_factory=lambda: [
-            TrackedItem(name="Goal achieved", description="The call did what it was for"),
-            TrackedItem(name="Call back later", description="The caller asked to talk later"),
-            TrackedItem(name="Wrong person", description="Someone other than the customer"),
-            TrackedItem(name="Not interested", description="The caller declined or hung up"),
+            TrackedItem(name="Promised to pay", description="Gave a date to pay the interest"),
+            TrackedItem(name="Already paid", description="Says the interest is already paid"),
+            TrackedItem(
+                name="Needs help", description="Facing difficulty or wants a manager to call"
+            ),
+            TrackedItem(name="Call back later", description="Asked to talk at another time"),
+            TrackedItem(name="Wrong person", description="Not the customer"),
+            TrackedItem(name="Refused", description="Won't pay or ended the call"),
         ],
         max_length=20,
     )
-    details: list[TrackedItem] = Field(default_factory=list, max_length=20)
+    details: list[TrackedItem] = Field(
+        default_factory=lambda: [
+            TrackedItem(
+                name="Promised payment date", description="The date they will pay, as YYYY-MM-DD"
+            ),
+            TrackedItem(name="Paid on", description="If already paid: when, as YYYY-MM-DD"),
+            TrackedItem(name="Call back at", description="When to call back, if they asked"),
+            TrackedItem(name="Reason for difficulty", description="Why they can't pay, in brief"),
+        ],
+        max_length=20,
+    )
 
     @field_validator("outcomes", "details")
     @classmethod
