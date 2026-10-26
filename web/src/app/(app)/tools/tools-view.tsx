@@ -33,6 +33,8 @@ import {
   type AgentSummary,
   type DatabaseToolConfig,
   type HttpToolConfig,
+  type McpServerTool,
+  type McpToolConfig,
   type SheetsToolConfig,
   type ToolDef,
   type ToolParam,
@@ -63,16 +65,23 @@ const NEW_HTTP: HttpToolConfig = {
 };
 
 const NEW_DB: DatabaseToolConfig = { query: "", mode: "read" };
+const NEW_MCP: McpToolConfig = {
+  server_url: "https://",
+  tool: "",
+  arg_types: {},
+};
 const NEW_CONFIG: Record<ToolType, Draft["config"]> = {
   google_sheets: NEW_SHEET,
   http: NEW_HTTP,
   database: NEW_DB,
+  mcp: NEW_MCP,
 };
 
 const TYPE_LABEL: Record<ToolType, string> = {
   google_sheets: "Google Sheets",
   http: "HTTP request",
   database: "Database",
+  mcp: "MCP server",
 };
 
 function blankDraft(): Draft {
@@ -147,8 +156,11 @@ function ToolForm({
   const sheet = draft.config as SheetsToolConfig;
   const http = draft.config as HttpToolConfig;
   const db = draft.config as DatabaseToolConfig;
+  const mcp = draft.config as McpToolConfig;
   const setConfig = (
-    change: Partial<SheetsToolConfig & HttpToolConfig & DatabaseToolConfig>,
+    change: Partial<
+      SheetsToolConfig & HttpToolConfig & DatabaseToolConfig & McpToolConfig
+    >,
   ) =>
     setDraft((d) => ({
       ...d,
@@ -171,7 +183,10 @@ function ToolForm({
     if (draft.type === "database" && connection.trim()) {
       return { connection: connection.trim() };
     }
-    if (draft.type === "http" && secretHeaders.some((h) => h.name.trim())) {
+    if (
+      (draft.type === "http" || draft.type === "mcp") &&
+      secretHeaders.some((h) => h.name.trim())
+    ) {
       return {
         headers: Object.fromEntries(
           secretHeaders
@@ -224,6 +239,100 @@ function ToolForm({
   });
 
   const editParams = (params: ToolParam[]) => set({ params });
+  const secretHeadersEditor = (
+    <div className="flex flex-col gap-2">
+      <p className="text-[13px] font-medium">
+        Secret headers
+        {saved?.secret_hint ? ` · saved: ${saved.secret_hint}` : ""}
+      </p>
+      <p className="text-2xs text-muted">
+        For API keys, e.g. Authorization. Stored encrypted and never shown
+        again.
+      </p>
+      {secretHeaders.map((h, i) => (
+        <div key={i} className="grid gap-2 sm:grid-cols-[200px_1fr_auto]">
+          <Input
+            aria-label={`Secret header ${i + 1}: name`}
+            placeholder="Authorization"
+            value={h.name}
+            onChange={(e) =>
+              setSecretHeaders(
+                secretHeaders.map((x, j) =>
+                  j === i ? { ...x, name: e.target.value } : x,
+                ),
+              )
+            }
+          />
+          <Input
+            aria-label={`Secret header ${i + 1}: value`}
+            type="password"
+            autoComplete="off"
+            value={h.value}
+            onChange={(e) =>
+              setSecretHeaders(
+                secretHeaders.map((x, j) =>
+                  j === i ? { ...x, value: e.target.value } : x,
+                ),
+              )
+            }
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Remove secret header ${i + 1}`}
+            onClick={() =>
+              setSecretHeaders(secretHeaders.filter((_, j) => j !== i))
+            }
+          >
+            <X className="size-4" aria-hidden />
+          </Button>
+        </div>
+      ))}
+      <Button
+        variant="secondary"
+        size="sm"
+        className="w-fit"
+        onClick={() =>
+          setSecretHeaders([...secretHeaders, { name: "", value: "" }])
+        }
+      >
+        <Plus className="size-3.5" aria-hidden />{" "}
+        {saved?.has_secrets ? "Replace secret headers" : "Add secret header"}
+      </Button>
+    </div>
+  );
+  const discover = useMutation({
+    mutationFn: () =>
+      api<McpServerTool[]>("/tools/mcp/discover", {
+        method: "POST",
+        json: {
+          server_url: mcp.server_url,
+          headers: Object.fromEntries(
+            secretHeaders
+              .filter((h) => h.name.trim())
+              .map((h) => [h.name, h.value]),
+          ),
+          tool_id: saved?.id ?? null,
+        },
+      }),
+  });
+  const pickMcpTool = (t: McpServerTool) =>
+    setDraft((d) => ({
+      ...d,
+      name:
+        d.name ||
+        t.tool
+          .toLowerCase()
+          .replace(/[^a-z0-9_]/g, "_")
+          .slice(0, 64),
+      description: d.description || t.description,
+      params: t.params,
+      config: {
+        ...(d.config as McpToolConfig),
+        tool: t.tool,
+        arg_types: t.arg_types,
+      },
+    }));
   const asked = placeholders(draft.config);
 
   return (
@@ -331,6 +440,7 @@ function ToolForm({
                   { value: "google_sheets", label: "Google Sheets" },
                   { value: "http", label: "HTTP request" },
                   { value: "database", label: "Database" },
+                  { value: "mcp", label: "MCP server" },
                 ]}
               />
             </div>
@@ -601,6 +711,69 @@ function ToolForm({
             </Field>
           </div>
         </Panel>
+      ) : draft.type === "mcp" ? (
+        <Panel title="MCP server">
+          <div className="flex flex-col gap-4">
+            <Field
+              label="Server URL"
+              hint="The server's Streamable HTTP address, e.g. https://crm.example.com/mcp"
+            >
+              {(p) => (
+                <Input
+                  {...p}
+                  value={mcp.server_url}
+                  onChange={(e) => setConfig({ server_url: e.target.value })}
+                />
+              )}
+            </Field>
+            {secretHeadersEditor}
+            <div className="flex flex-col gap-2">
+              <Button
+                variant="secondary"
+                className="w-fit"
+                disabled={!/^https?:\/\/./.test(mcp.server_url)}
+                loading={discover.isPending}
+                onClick={() => discover.mutate()}
+              >
+                Load tools from the server
+              </Button>
+              {discover.isError && <ErrorNotice error={discover.error} />}
+              {discover.data?.length === 0 && (
+                <p className="text-[13px] text-muted">
+                  The server offers no tools.
+                </p>
+              )}
+              {discover.data?.map((t) => (
+                <label
+                  key={t.tool}
+                  className="flex items-start gap-3 rounded-lg px-1 py-1.5 hover:bg-surface"
+                >
+                  <input
+                    type="radio"
+                    name="mcp-tool"
+                    className="mt-1"
+                    checked={mcp.tool === t.tool}
+                    onChange={() => pickMcpTool(t)}
+                  />
+                  <span>
+                    <span className="font-mono text-[13px] font-medium">
+                      {t.tool}
+                    </span>
+                    <span className="block text-[13px] text-muted">
+                      {t.description}
+                    </span>
+                  </span>
+                </label>
+              ))}
+              {mcp.tool && !discover.data && (
+                <p className="text-[13px] text-muted">
+                  Uses the server&apos;s{" "}
+                  <span className="font-mono">{mcp.tool}</span> tool.
+                </p>
+              )}
+            </div>
+          </div>
+        </Panel>
       ) : draft.type === "database" ? (
         <Panel title="Database (PostgreSQL)">
           <div className="flex flex-col gap-4">
@@ -717,71 +890,7 @@ function ToolForm({
                 )}
               </Field>
             )}
-            <div className="flex flex-col gap-2">
-              <p className="text-[13px] font-medium">
-                Secret headers
-                {saved?.secret_hint ? ` · saved: ${saved.secret_hint}` : ""}
-              </p>
-              <p className="text-2xs text-muted">
-                For API keys, e.g. Authorization. Stored encrypted and never
-                shown again.
-              </p>
-              {secretHeaders.map((h, i) => (
-                <div
-                  key={i}
-                  className="grid gap-2 sm:grid-cols-[200px_1fr_auto]"
-                >
-                  <Input
-                    aria-label={`Secret header ${i + 1}: name`}
-                    placeholder="Authorization"
-                    value={h.name}
-                    onChange={(e) =>
-                      setSecretHeaders(
-                        secretHeaders.map((x, j) =>
-                          j === i ? { ...x, name: e.target.value } : x,
-                        ),
-                      )
-                    }
-                  />
-                  <Input
-                    aria-label={`Secret header ${i + 1}: value`}
-                    type="password"
-                    autoComplete="off"
-                    value={h.value}
-                    onChange={(e) =>
-                      setSecretHeaders(
-                        secretHeaders.map((x, j) =>
-                          j === i ? { ...x, value: e.target.value } : x,
-                        ),
-                      )
-                    }
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    aria-label={`Remove secret header ${i + 1}`}
-                    onClick={() =>
-                      setSecretHeaders(secretHeaders.filter((_, j) => j !== i))
-                    }
-                  >
-                    <X className="size-4" aria-hidden />
-                  </Button>
-                </div>
-              ))}
-              <Button
-                variant="secondary"
-                size="sm"
-                className="w-fit"
-                onClick={() =>
-                  setSecretHeaders([...secretHeaders, { name: "", value: "" }])
-                }
-              >
-                <Plus className="size-3.5" aria-hidden />{" "}
-                {saved?.has_secrets
-                  ? "Replace secret headers"
-                  : "Add secret header"}
-              </Button>
-            </div>
+            {secretHeadersEditor}
           </div>
         </Panel>
       )}

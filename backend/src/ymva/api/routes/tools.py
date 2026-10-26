@@ -22,8 +22,10 @@ from ymva.services.tools import (
     RESERVED_NAMES,
     SECRET_TYPES,
     TOOL_NAME_RE,
+    ToolError,
     ToolParam,
     call_facts,
+    mcp_tools,
     placeholders,
     run_tool,
     secret_hint,
@@ -32,7 +34,7 @@ from ymva.voice.config import AgentConfig, detected_variables
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 
-SUPPORTED = Literal["google_sheets", "http", "database"]
+SUPPORTED = Literal["google_sheets", "http", "database", "mcp"]
 
 
 class ToolIn(BaseModel):
@@ -71,6 +73,13 @@ class ToolOut(BaseModel):
 
 class TestIn(BaseModel):
     values: dict[str, str] = Field(default_factory=dict)
+
+
+class McpDiscoverIn(BaseModel):
+    server_url: str = Field(pattern=r"^https?://", max_length=2000)
+    headers: dict[str, str] = Field(default_factory=dict)
+    # Editing a saved MCP tool: use its stored secret headers when none are typed.
+    tool_id: uuid.UUID | None = None
 
 
 class GenerateIn(BaseModel):
@@ -295,6 +304,20 @@ async def test_tool(
     return result
 
 
+@router.post("/mcp/discover")
+async def discover_mcp_tools(
+    body: McpDiscoverIn, _: AdminUser, db: DbSession
+) -> list[dict[str, Any]]:
+    """List the tools an MCP server offers, so the admin can pick one."""
+    headers = body.headers
+    if not headers and body.tool_id is not None:
+        headers = (_secrets(await _get(db, body.tool_id)) or {}).get("headers", {})
+    try:
+        return await mcp_tools(body.server_url, headers)
+    except ToolError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+
+
 # ---- Tool Builder ----------------------------------------------------------------------------
 
 
@@ -306,7 +329,8 @@ class GeneratedColumn(BaseModel):
 class GeneratedTool(BaseModel):
     name: str = Field(description="snake_case, e.g. save_payment_promise")
     description: str = Field(description="When the agent should use it, for the agent")
-    type: SUPPORTED
+    # MCP tools come from the server's own list (Load tools), not from a description.
+    type: Literal["google_sheets", "http", "database"]
     params: list[ToolParam]
     sheet_action: Literal["append_row", "find_row"]
     sheet_columns: list[GeneratedColumn]

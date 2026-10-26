@@ -233,3 +233,27 @@ async def test_database_tool_binds_values_and_respects_read_only() -> None:
     finally:
         await conn.execute("drop table zz_loans")
         await conn.close()
+
+
+async def test_mcp_tool_lists_and_calls_server_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mcp import Client
+    from mcp.server.mcpserver import MCPServer
+
+    server = MCPServer("crm")
+
+    @server.tool()
+    def loan_status(loan_id: str, months: int = 1) -> str:
+        """Interest due for a loan."""
+        return f"{loan_id}: 2450 due for {months} month(s)"
+
+    monkeypatch.setattr(tools_service, "_mcp_client", lambda url, headers: Client(server))
+
+    found = await tools_service.mcp_tools("https://crm.example.com/mcp", {})
+    assert found[0]["tool"] == "loan_status"
+    assert found[0]["arg_types"] == {"loan_id": "string", "months": "integer"}
+    assert [p["name"] for p in found[0]["params"] if p["required"]] == ["loan_id"]
+
+    config = {"server_url": "https://crm.example.com/mcp", "tool": "loan_status"}
+    config["arg_types"] = found[0]["arg_types"]
+    result = await tools_service.run_tool("mcp", config, {}, {"loan_id": "YM1", "months": "3"})
+    assert result["ok"] and "YM1: 2450 due for 3 month(s)" in str(result["response"])

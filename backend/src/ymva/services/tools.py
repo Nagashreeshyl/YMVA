@@ -83,10 +83,18 @@ class DatabaseConfig(BaseModel):
     mode: Literal["read", "write"] = "read"
 
 
+class McpConfig(BaseModel):
+    server_url: str = Field(pattern=r"^https?://", max_length=2000)
+    tool: str = Field(min_length=1, max_length=200)  # the tool's name on the MCP server
+    # JSON types of the tool's inputs, so the agent's text is sent as numbers/booleans.
+    arg_types: dict[str, str] = Field(default_factory=dict)
+
+
 CONFIG_TYPES: dict[str, type[BaseModel]] = {
     "google_sheets": SheetsConfig,
     "http": HttpConfig,
     "database": DatabaseConfig,
+    "mcp": McpConfig,
 }
 
 
@@ -117,6 +125,7 @@ SECRET_TYPES: dict[str, type[BaseModel]] = {
     "google_sheets": SheetsSecrets,
     "http": HttpSecrets,
     "database": DatabaseSecrets,
+    "mcp": HttpSecrets,
 }
 
 
@@ -331,6 +340,89 @@ async def _run_database(
     return {"ok": True, "rows": json.loads(json.dumps(found, default=str)), "count": len(rows)}
 
 
+# ---- MCP ----------------------------------------------------------------------------------
+
+
+def _mcp_client(server_url: str, headers: dict[str, str]) -> Any:
+    """A client for the server (replaced in tests by an in-process server)."""
+    import httpx2
+    from mcp import Client
+    from mcp.client.streamable_http import streamable_http_client
+
+    http = httpx2.AsyncClient(headers=headers, timeout=TOOL_TIMEOUT_SECS)
+    return Client(
+        streamable_http_client(server_url, http_client=http),
+        read_timeout_seconds=TOOL_TIMEOUT_SECS,
+    )
+
+
+def _json_typed(value: str, json_type: str) -> Any:
+    if json_type == "integer":
+        return int(value.replace(",", ""))
+    if json_type == "number":
+        return float(value.replace(",", ""))
+    if json_type == "boolean":
+        return value.strip().lower() in ("true", "yes", "1")
+    return value
+
+
+async def mcp_tools(server_url: str, headers: dict[str, str]) -> list[dict[str, Any]]:
+    """The tools an MCP server offers, shaped like our tool form (for the admin to pick one)."""
+    try:
+        async with _mcp_client(server_url, headers) as client:
+            listed = await client.list_tools()
+    except Exception as exc:
+        raise ToolError(
+            f"Couldn't load tools from the MCP server: {exc.__class__.__name__}"
+        ) from exc
+    found = []
+    for tool in listed.tools:
+        schema = tool.input_schema or {}
+        required = set(schema.get("required", []))
+        props: dict[str, Any] = schema.get("properties", {})
+        found.append(
+            {
+                "tool": tool.name,
+                "description": tool.description or "",
+                "params": [
+                    {
+                        "name": name,
+                        "description": str(spec.get("description", ""))[:300],
+                        "required": name in required,
+                    }
+                    for name, spec in props.items()
+                ],
+                "arg_types": {n: str(spec.get("type", "string")) for n, spec in props.items()},
+            }
+        )
+    return found
+
+
+async def _run_mcp(
+    config: McpConfig, secrets: dict[str, Any], values: dict[str, str]
+) -> dict[str, Any]:
+    try:
+        args = {
+            name: _json_typed(values[name], kind)
+            for name, kind in config.arg_types.items()
+            if values.get(name, "") != ""
+        }
+    except ValueError as exc:
+        raise ToolError(f"A value isn't the right kind: {exc}") from exc
+    headers = HttpSecrets.model_validate(secrets or {}).headers
+    # shortcut: connects per use (about 0.3-1 s); keep one session per call if that's too slow.
+    try:
+        async with _mcp_client(config.server_url, headers) as client:
+            result = await client.call_tool(config.tool, args)
+    except Exception as exc:
+        raise ToolError(f"The MCP server didn't answer: {exc.__class__.__name__}") from exc
+    text = "\n".join(getattr(c, "text", "") for c in result.content).strip()
+    if result.is_error:
+        raise ToolError(text[:300] or "The MCP tool reported an error")
+    answer: Any = result.structured_content or text
+    return {"ok": True, "response": answer}
+
+
 # ---- running ------------------------------------------------------------------------------
 
 
@@ -347,6 +439,7 @@ async def run_tool(
             "google_sheets": _run_sheets,
             "http": _run_http,
             "database": _run_database,
+            "mcp": _run_mcp,
         }
         result: dict[str, Any] = await asyncio.wait_for(
             runners[tool_type](parsed, secrets or {}, values), TOOL_TIMEOUT_SECS + 2

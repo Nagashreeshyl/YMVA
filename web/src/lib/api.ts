@@ -259,14 +259,29 @@ export interface DatabaseToolConfig {
   mode: "read" | "write";
 }
 
-export type ToolType = "google_sheets" | "http" | "database";
+export interface McpToolConfig {
+  server_url: string;
+  /** The tool's name on the MCP server. */
+  tool: string;
+  arg_types: Record<string, string>;
+}
+
+/** A tool an MCP server offers, shaped for the tool form. */
+export interface McpServerTool {
+  tool: string;
+  description: string;
+  params: ToolParam[];
+  arg_types: Record<string, string>;
+}
+
+export type ToolType = "google_sheets" | "http" | "database" | "mcp";
 
 export interface ToolDef {
   id: string;
   name: string;
   description: string;
   type: ToolType;
-  config: SheetsToolConfig | HttpToolConfig | DatabaseToolConfig;
+  config: SheetsToolConfig | HttpToolConfig | DatabaseToolConfig | McpToolConfig;
   params: ToolParam[];
   has_secrets: boolean;
   /** The service account's email (share the sheet with it) or the secret header names. */
