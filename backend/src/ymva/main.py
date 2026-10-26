@@ -23,6 +23,7 @@ from ymva.api.routes import (
     numbers,
     overview,
     telephony,
+    tools,
     users,
 )
 from ymva.config import get_settings
@@ -118,6 +119,7 @@ def create_app() -> FastAPI:
         agents,
         builder,
         calls,
+        tools,
         telephony,
     ):
         api.include_router(module.router)

@@ -1,12 +1,13 @@
 "use client";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { Button, Field, Input, Panel, Segmented, Select, Switch, Textarea } from "@/components/ui";
 import { VoicePicker } from "@/components/voice-picker";
 import { detectVariables, variableLabel } from "@/lib/variables";
-import { api, type AgentConfig, type AgentDetail, type AgentOptions, type TrackedItem } from "@/lib/api";
+import { api, type AgentConfig, type AgentDetail, type AgentOptions, type ToolDef, type TrackedItem } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
 type Updater = (draft: AgentConfig) => void;
@@ -26,6 +27,7 @@ export function AgentEditor({
   onSaveState: (state: SaveState, error?: string) => void;
 }) {
   const queryClient = useQueryClient();
+  const tools = useQuery({ queryKey: ["tools"], queryFn: () => api<ToolDef[]>("/tools") });
   // The editor owns its copy; it is re-created (via `key`) when the draft is replaced from outside.
   const [draft, setDraft] = useState<AgentConfig>(() => structuredClone(agent.config));
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -452,6 +454,45 @@ export function AgentEditor({
             onChange={(items) => update((d) => void (d.analysis.details = items))}
           />
         </div>
+      </Panel>
+
+      <Panel
+        title="Tools"
+        description="Actions this agent can take during a call, such as saving a promised payment date to your sheet. Set tools up on the Tools page."
+      >
+        {(tools.data ?? []).length === 0 ? (
+          <p className="text-[13px] text-muted">
+            No tools yet.{" "}
+            <Link href="/tools" className="underline underline-offset-4 hover:text-ink">
+              Create one on the Tools page
+            </Link>
+            .
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {tools.data?.map((t) => (
+              <li key={t.id}>
+                <label className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={draft.tools.includes(t.name)}
+                    onChange={(e) =>
+                      update((d) => {
+                        d.tools = e.target.checked ? [...d.tools, t.name] : d.tools.filter((n) => n !== t.name);
+                      })
+                    }
+                  />
+                  <span>
+                    <span className="font-mono text-[13px] font-medium">{t.name}</span>
+                    {!t.is_active && <span className="text-2xs text-muted"> · switched off</span>}
+                    <span className="block text-[13px] text-muted">{t.description}</span>
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
       </Panel>
 
       <Panel title="Call atmosphere" description="Sounds are added only where a real call would have them.">

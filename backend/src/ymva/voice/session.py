@@ -3,7 +3,9 @@
 import asyncio
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from google.genai.types import ThinkingConfig
 from pipecat.adapters.schemas.function_schema import FunctionSchema
@@ -42,6 +44,7 @@ from ymva.config import get_settings
 from ymva.logging import get_logger
 from ymva.models import CallEventType, CallStatus
 from ymva.services import analysis
+from ymva.services.tools import LoadedTool, call_facts, run_tool
 from ymva.voice import greeting
 from ymva.voice.ambience import AmbienceMixer
 from ymva.voice.config import AgentConfig
@@ -92,6 +95,8 @@ class CallSetup:
     # Call atmosphere mixer, shared with the output transport (see make_mixer).
     mixer: AmbienceMixer | None = None
     provider_call_id: str | None = None
+    tools: list[LoadedTool] = field(default_factory=list)
+    customer_phone: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -195,6 +200,22 @@ class CallSession:
         if self._ending is None or self._ending.done():
             self._ending = asyncio.create_task(self._hang_up_after_goodbye(reason))
 
+    async def _run_tool(self, params: FunctionCallParams) -> None:
+        tool = next(t for t in self.setup.tools if t.name == params.function_name)
+        args = {k: str(v) for k, v in (params.arguments or {}).items() if v is not None}
+        await self.recorder.event(
+            CallEventType.TOOL_CALL, tool.name, data={"tool": tool.name, "arguments": args}
+        )
+        now = datetime.now(ZoneInfo(get_settings().timezone))
+        values = call_facts(now, self.setup.customer_phone) | self.setup.variables | args
+        result = await run_tool(tool.type, tool.config, tool.secrets, values)
+        await self.recorder.event(
+            CallEventType.TOOL_RESULT,
+            "ok" if result.get("ok") else str(result.get("error", "failed")),
+            data={"tool": tool.name, "result": result},
+        )
+        await params.result_callback(result)
+
     async def _hang_up_after_goodbye(self, reason: str) -> None:
         """Models sometimes call end_call too early. Let the agent finish speaking, then hang
         up only if the caller stays quiet for a moment; if they start talking, keep going."""
@@ -229,7 +250,7 @@ class CallSession:
         variables = self.setup.variables
         self.opening = opening_language(config, variables)
         instruction = system_instruction(config, variables, self.opening, get_settings().timezone)
-        tools = ToolsSchema(standard_tools=[END_CALL])
+        tools = ToolsSchema(standard_tools=[END_CALL, *(t.schema() for t in self.setup.tools)])
 
         async def on_switch(previous: str | None, current: str) -> None:
             await self.recorder.event(
@@ -278,6 +299,8 @@ class CallSession:
                 inference_on_context_initialization=False,
             )
             llm.register_function("end_call", self._end_call)
+            for tool in self.setup.tools:
+                llm.register_function(tool.name, self._run_tool)
             self._live_llm = llm
             context = LLMContext(messages=[])
             pair = LLMContextAggregatorPair(context, user_params=user_params)
@@ -328,6 +351,8 @@ class CallSession:
         for service in llms:
             assert isinstance(service, GoogleLLMService)
             service.register_function("end_call", self._end_call)
+            for tool in self.setup.tools:
+                service.register_function(tool.name, self._run_tool)
         self._warm_llm = llms[0]
         llm = ServiceSwitcher(services=llms, strategy_type=ServiceSwitcherStrategyFailover)
 

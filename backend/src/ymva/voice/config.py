@@ -183,6 +183,8 @@ class AgentConfig(BaseModel):
     limits: CallLimits = Field(default_factory=CallLimits)
     atmosphere: Atmosphere = Field(default_factory=Atmosphere)
     analysis: Analysis = Field(default_factory=Analysis)
+    # Names of tools (from the Tools page) the agent may use during calls.
+    tools: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("languages")
     @classmethod

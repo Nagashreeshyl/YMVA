@@ -8,9 +8,10 @@ from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPI
 
 from ymva.db import get_sessionmaker
 from ymva.logging import get_logger
-from ymva.models import Agent, AgentVersion, Call, CallStatus
+from ymva.models import Agent, AgentVersion, Call, CallDirection, CallStatus
 from ymva.services.calls import ACTIVE_SESSIONS, CallSetupError, string_variables
 from ymva.services.integrations import load_ai_keys
+from ymva.services.tools import load_tools
 from ymva.voice import greeting
 from ymva.voice.config import AgentConfig
 from ymva.voice.session import (
@@ -37,6 +38,7 @@ async def load_setup(
             raise CallSetupError("The agent for this call no longer exists")
         config = AgentConfig.model_validate(call.agent_config or version.config)
         keys = await load_ai_keys(db)
+        tools = await load_tools(db, config.tools)
     variables = string_variables(call.variables)
     if not greeting.has(call_id):
         greeting.prefetch(call_id, config, variables, keys, output_sample_rate)
@@ -53,6 +55,10 @@ async def load_setup(
         send_live_events=live_events,
         provider_call_id=call.provider_call_id,
         output_sample_rate=output_sample_rate,
+        tools=tools,
+        customer_phone=call.to_number
+        if call.direction == CallDirection.OUTBOUND
+        else call.from_number,
     )
 
 

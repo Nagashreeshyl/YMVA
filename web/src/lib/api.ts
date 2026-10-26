@@ -172,6 +172,8 @@ export interface AgentConfig {
   atmosphere: { room_tone: boolean; typing_while_thinking: boolean; volume: number };
   /** Written down after each call: one outcome and any of these details the customer gave. */
   analysis: { outcomes: TrackedItem[]; details: TrackedItem[] };
+  /** Names of tools from the Tools page the agent may use during calls. */
+  tools: string[];
 }
 
 export interface TrackedItem {
@@ -223,6 +225,50 @@ export interface AssistantMessage {
 export interface AssistantTurn {
   messages: AssistantMessage[];
   agent: AgentDetail;
+}
+
+export interface ToolParam {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+export interface SheetColumn {
+  header: string;
+  value: string;
+}
+
+export interface SheetsToolConfig {
+  spreadsheet: string;
+  sheet: string;
+  action: "append_row" | "find_row";
+  columns: SheetColumn[];
+  match_column: string;
+  match_value: string;
+}
+
+export interface HttpToolConfig {
+  method: "GET" | "POST" | "PUT" | "PATCH";
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
+export type ToolType = "google_sheets" | "http";
+
+export interface ToolDef {
+  id: string;
+  name: string;
+  description: string;
+  type: ToolType;
+  config: SheetsToolConfig | HttpToolConfig;
+  params: ToolParam[];
+  has_secrets: boolean;
+  /** The service account's email (share the sheet with it) or the secret header names. */
+  secret_hint: string | null;
+  is_active: boolean;
+  used_by: string[];
+  updated_at: string;
 }
 
 export interface AgentOptions {
