@@ -23,6 +23,10 @@ class CallSetupError(Exception):
     """Reason a call can't start; safe to show to admins."""
 
 
+class DoNotCallError(CallSetupError):
+    """The number is on the do-not-call list."""
+
+
 class LinesBusyError(CallSetupError):
     """The platform-wide concurrent call limit is reached; try again shortly."""
 

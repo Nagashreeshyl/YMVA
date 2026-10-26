@@ -31,6 +31,7 @@ _GEMINI_TTS_MODELS = (
     "gemini-3.1-flash-tts-preview",
     "gemini-2.5-flash-preview-tts",
 )
+_ACCENT_DIRECTION = "Say warmly, in a natural Indian English accent"
 _GEMINI_TTS_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
@@ -84,7 +85,8 @@ async def synthesize_sarvam(
 
 async def synthesize_gemini(text: str, voice: str, api_key: str) -> tuple[bytes, int]:
     body = {
-        "contents": [{"parts": [{"text": text}]}],
+        # Same accent as the live call (see prompts.INDIAN_ACCENT); the prefix isn't spoken.
+        "contents": [{"parts": [{"text": f"{_ACCENT_DIRECTION}: {text}"}]}],
         "generationConfig": {
             "responseModalities": ["AUDIO"],
             "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},

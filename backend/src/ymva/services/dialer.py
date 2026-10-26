@@ -30,7 +30,7 @@ from ymva.models import (
 )
 from ymva.redis import get_redis
 from ymva.services.analysis import NO_CONVERSATION
-from ymva.services.calls import CallSetupError, LinesBusyError
+from ymva.services.calls import CallSetupError, DoNotCallError, LinesBusyError
 from ymva.services.drain import is_draining
 from ymva.services.outbound import start_outbound_call
 from ymva.telephony import TelephonyError
@@ -153,6 +153,10 @@ async def _dial(db: AsyncSession, campaign: Campaign, now: datetime) -> bool:
             call = await start_outbound_call(db, agent, number, contact.phone, contact.variables)
         except LinesBusyError:
             return False  # out of lines: stop dialing everywhere this tick, try again next
+        except DoNotCallError:
+            contact.status, contact.last_result = ContactStatus.FAILED, "On the do-not-call list"
+            await db.commit()
+            continue
         except CallSetupError as exc:
             campaign.last_error = str(exc)[:300]
             await db.commit()

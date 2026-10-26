@@ -6,10 +6,11 @@ import { PageHeader } from "@/components/ui";
 import { useMe } from "@/lib/session";
 import { AccountSettings } from "./account";
 import { AuditLogList } from "./audit-log";
+import { DoNotCallSettings } from "./do-not-call";
 import { HealthSettings } from "./health";
 import { TeamSettings } from "./team";
 
-type Tab = "team" | "health" | "audit" | "account";
+type Tab = "team" | "health" | "dnc" | "audit" | "account";
 
 export default function SettingsPage() {
   const { data: me } = useMe();
@@ -17,6 +18,7 @@ export default function SettingsPage() {
   const tabs: { id: Tab; label: string }[] = [
     ...(isAdmin ? [{ id: "team" as const, label: "Team" }] : []),
     { id: "health", label: "Health & alerts" },
+    { id: "dnc", label: "Do not call" },
     { id: "audit", label: "Audit log" },
     { id: "account", label: "Your account" },
   ];
@@ -27,7 +29,7 @@ export default function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        description="People, system health and alerts, history of changes, and your sign-in."
+        description="People, system health and alerts, numbers never to call, history of changes, and your sign-in."
       />
       <div
         role="tablist"
@@ -57,6 +59,7 @@ export default function SettingsPage() {
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
         {tab === "team" && isAdmin && <TeamSettings currentUserId={me.id} />}
         {tab === "health" && <HealthSettings canEdit={isAdmin} />}
+        {tab === "dnc" && <DoNotCallSettings canEdit={isAdmin} />}
         {tab === "audit" && <AuditLogList />}
         {tab === "account" && <AccountSettings />}
       </div>

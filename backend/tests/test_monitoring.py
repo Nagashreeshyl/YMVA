@@ -47,6 +47,7 @@ def test_problems_cover_each_check() -> None:
         dialer_idle_seconds=4,
         draining=False,
         backup_age_hours=3,
+        disk_free_percent=40,
     )
     assert monitoring.problems(healthy) == {}
     broken = monitoring.Snapshot(
@@ -56,6 +57,7 @@ def test_problems_cover_each_check() -> None:
             "errors_last_15m": 12,
             "dialer_idle_seconds": 400,
             "backup_age_hours": None,
+            "disk_free_percent": 4,
             "failing_accounts": ["Plivo main"],
         }
     )
@@ -64,6 +66,7 @@ def test_problems_cover_each_check() -> None:
         "service_errors",
         "dialer_stalled",
         "backup_stale",
+        "disk_low",
         "account:Plivo main",
     }
 

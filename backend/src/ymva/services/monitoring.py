@@ -6,6 +6,7 @@ check starts failing, and again when it recovers. A Redis lock makes one process
 
 import asyncio
 import os
+import shutil
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -16,6 +17,7 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ymva.config import get_settings
 from ymva.db import get_sessionmaker
 from ymva.logging import get_logger
 from ymva.models import (
@@ -58,8 +60,17 @@ class Snapshot:
     dialer_idle_seconds: float | None  # since the dialer last ran; None if it never ran
     draining: bool
     backup_age_hours: float | None
+    disk_free_percent: float | None = None  # where recordings are kept
     failing_accounts: list[str] = field(default_factory=list)
     failing_ai_keys: list[str] = field(default_factory=list)
+
+
+def _disk_free_percent() -> float | None:
+    try:
+        usage = shutil.disk_usage(get_settings().recordings_dir)
+    except OSError:
+        return None
+    return round(usage.free / usage.total * 100, 1)
 
 
 def _newest_backup_age_hours() -> float | None:
@@ -132,6 +143,7 @@ async def snapshot(db: AsyncSession) -> Snapshot:
         dialer_idle_seconds=round(time.time() - float(tick), 1) if tick else None,
         draining=await is_draining(),
         backup_age_hours=_newest_backup_age_hours(),
+        disk_free_percent=_disk_free_percent(),
         failing_accounts=[
             a.name
             for a in await db.scalars(
@@ -187,6 +199,9 @@ def prometheus_text(s: Snapshot) -> str:
         "# HELP ymva_backup_age_hours Age of the newest database backup.",
         "# TYPE ymva_backup_age_hours gauge",
         f"ymva_backup_age_hours {_num(s.backup_age_hours)}",
+        "# HELP ymva_disk_free_percent Free space on the disk that holds recordings.",
+        "# TYPE ymva_disk_free_percent gauge",
+        f"ymva_disk_free_percent {_num(s.disk_free_percent)}",
         "# TYPE ymva_failing_integrations gauge",
         f"ymva_failing_integrations {len(s.failing_accounts) + len(s.failing_ai_keys)}",
     ]
@@ -216,6 +231,10 @@ def problems(s: Snapshot) -> dict[str, str]:
             "No database backup found"
             if s.backup_age_hours is None
             else f"The newest database backup is {s.backup_age_hours:.0f} hours old"
+        )
+    if s.disk_free_percent is not None and s.disk_free_percent < 10:
+        found["disk_low"] = (
+            f"Only {s.disk_free_percent:.0f}% disk space left; calls stop recording when it's full"
         )
     for name in s.failing_accounts:
         found[f"account:{name}"] = f"Telephony account '{name}' fails its connection check"

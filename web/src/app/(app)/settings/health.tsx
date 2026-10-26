@@ -25,6 +25,7 @@ interface Health {
     dialer_idle_seconds: number | null;
     draining: boolean;
     backup_age_hours: number | null;
+    disk_free_percent: number | null;
   };
   problems: Record<string, string>;
   alerting: boolean;
@@ -56,7 +57,7 @@ function Alerts() {
   return (
     <Panel
       title="Alerts"
-      description="When something goes wrong (calls failing, the dialer stuck, backups missing, a key or phone account failing its check), YMVA posts a message here, and again when it's fixed."
+      description="When something goes wrong (calls failing, the dialer stuck, backups missing, the disk filling up, a key or phone account failing its check), YMVA posts a message here, and again when it's fixed."
     >
       <form
         className="flex flex-col gap-3"
@@ -133,6 +134,12 @@ export function HealthSettings({ canEdit }: { canEdit: boolean }) {
       s.backup_age_hours === null
         ? "None found"
         : `${Math.round(s.backup_age_hours)} h ago`,
+    ],
+    [
+      "Disk space free",
+      s.disk_free_percent === null
+        ? "—"
+        : `${Math.round(s.disk_free_percent)}%`,
     ],
     [
       "Campaign dialer",

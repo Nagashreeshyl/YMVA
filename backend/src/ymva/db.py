@@ -17,8 +17,9 @@ from ymva.config import get_settings
 def get_engine() -> AsyncEngine:
     return create_async_engine(
         get_settings().database_url,
-        pool_size=10,
-        max_overflow=20,
+        # Per API worker; 6 workers stay within Postgres' default 100 connections.
+        pool_size=5,
+        max_overflow=10,
         pool_pre_ping=True,
         pool_recycle=1800,
     )

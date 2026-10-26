@@ -4,7 +4,7 @@ from ymva.models.base import Base
 from ymva.models.call import Call, CallDirection, CallEvent, CallEventType, CallStatus
 from ymva.models.campaign import Campaign, CampaignContact, CampaignStatus, ContactStatus
 from ymva.models.integration import AICredential, AIProvider
-from ymva.models.setting import AppSetting
+from ymva.models.setting import AppSetting, DoNotCall
 from ymva.models.telephony import PhoneNumber, ProviderAccount, TelephonyProvider
 from ymva.models.tool import Tool, ToolType
 from ymva.models.user import ApiKey, Role, User, UserSession
@@ -29,6 +29,7 @@ __all__ = [
     "CampaignContact",
     "CampaignStatus",
     "ContactStatus",
+    "DoNotCall",
     "PhoneNumber",
     "ProviderAccount",
     "Role",

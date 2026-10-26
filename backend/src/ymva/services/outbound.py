@@ -4,8 +4,22 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ymva.models import Agent, Call, CallDirection, CallStatus, PhoneNumber, ProviderAccount
-from ymva.services.calls import CallSetupError, check_capacity, runnable_version, string_variables
+from ymva.models import (
+    Agent,
+    Call,
+    CallDirection,
+    CallStatus,
+    DoNotCall,
+    PhoneNumber,
+    ProviderAccount,
+)
+from ymva.services.calls import (
+    CallSetupError,
+    DoNotCallError,
+    check_capacity,
+    runnable_version,
+    string_variables,
+)
 from ymva.services.drain import is_draining
 from ymva.services.integrations import load_ai_keys, telephony_client, webhook_urls
 from ymva.telephony import TelephonyError
@@ -22,6 +36,8 @@ async def start_outbound_call(
     refuses; in that case the call is saved as failed. The caller commits."""
     if await is_draining():
         raise CallSetupError("YMVA is restarting for an update. Try again in a few minutes.")
+    if await db.get(DoNotCall, to):
+        raise DoNotCallError("This number is on the do-not-call list")
     account = await db.get(ProviderAccount, number.provider_account_id)
     if account is None or not account.is_active or not number.is_active:
         raise CallSetupError("This number or its account is turned off")

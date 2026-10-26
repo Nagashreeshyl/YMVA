@@ -250,6 +250,7 @@ This restores the newest backup into a scratch database and counts what's in it.
 | Service errors | 10 or more AI/provider errors on calls in 15 minutes, usually a quota or rate limit |
 | Dialer | campaigns are running but the dialer hasn't run for 2 minutes |
 | Backups | no backup, or the newest is more than 30 hours old |
+| Disk space | less than 10% free on the disk that holds recordings |
 | Integrations | a telephony account or AI key fails its check |
 
 **Graphs (optional):** `./ymva start --domain … --monitoring` also runs Prometheus and Grafana. Grafana listens only on the server itself, so reach it through an SSH tunnel:

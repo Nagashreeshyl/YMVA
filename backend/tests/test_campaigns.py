@@ -161,3 +161,32 @@ async def test_draining_pauses_new_calls(
     await drain.stop_draining()
     await dialer.tick(OPEN)
     assert len(placed) == 1
+
+
+async def test_do_not_call_list_is_never_dialed(
+    admin_client: httpx.AsyncClient, placed: list[dict[str, Any]]
+) -> None:
+    campaign, setup = await _campaign(admin_client, max_concurrent=2)
+    await admin_client.post(f"/api/campaigns/{campaign['id']}/contacts", json={"csv": CSV})
+    bad = await admin_client.post("/api/do-not-call", json={"numbers": "12"})
+    assert bad.status_code == 422
+    added = await admin_client.post(
+        "/api/do-not-call", json={"numbers": "98450 12345, 9845012345", "reason": "Asked"}
+    )
+    assert added.json() == {"added": 1}
+    await admin_client.post(f"/api/campaigns/{campaign['id']}/start")
+    await dialer.tick(OPEN)
+    assert [p["to_number"] for p in placed] == ["+919845054321"]
+    blocked = await _contacts_by("+919845012345")
+    assert blocked.status == ContactStatus.FAILED and "do-not-call" in (blocked.last_result or "")
+    resp = await admin_client.post(
+        "/api/calls/outbound",
+        json={
+            "agent_id": setup["agent"]["id"],
+            "from_number_id": setup["number"]["id"],
+            "to": "+919845012345",
+        },
+    )
+    assert resp.status_code == 400 and "do-not-call" in resp.json()["detail"]
+    assert (await admin_client.delete("/api/do-not-call/+919845012345")).status_code == 204
+    assert (await admin_client.get("/api/do-not-call")).json() == []

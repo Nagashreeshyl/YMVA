@@ -50,6 +50,13 @@ How to speak on a phone call:
 - When the conversation is complete, or the caller wants to end it, say a short goodbye in the
   caller's language and then call the end_call tool."""
 
+# Gemini's voices sound American by default; the CEO asked for Indian English.
+INDIAN_ACCENT = """\
+Your accent:
+- Whenever you speak English, including English words inside another language, use a natural
+  Indian English accent and intonation, like a friendly customer care executive from Bengaluru.
+  Never sound American or British."""
+
 
 def opening_language(config: AgentConfig, variables: dict[str, str]) -> str:
     """Greeting language: customer's preferred language, else their state's, else the default."""
@@ -86,7 +93,7 @@ Languages:
 
 {EVERYDAY_MIX if config.speaking_style == "everyday_mix" else PURE_LANGUAGE}
 
-{VOICE_RULES}"""
+{VOICE_RULES}{chr(10) * 2 + INDIAN_ACCENT if config.mode == "gemini_live" else ""}"""
 
 
 def opening_lines(
