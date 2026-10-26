@@ -84,14 +84,16 @@ def _secrets(tool: Tool) -> dict[str, Any] | None:
 
 
 async def _used_by(db: DbSession) -> dict[str, list[str]]:
-    """Tool name -> agents whose live version or draft uses it."""
+    """Tool name -> agents whose live version or draft uses it, in calls or after them."""
     users: dict[str, list[str]] = {}
     for agent in await db.scalars(select(Agent)):
         configs = [agent.draft_config or {}]
         if agent.published_version_id:
             version = await db.get(AgentVersion, agent.published_version_id)
             configs.append(version.config if version else {})
-        for name in {n for c in configs for n in c.get("tools", [])}:
+        names = {n for c in configs for n in c.get("tools", [])}
+        names |= {n for c in configs for n in c.get("analysis", {}).get("send_to", [])}
+        for name in names:
             users.setdefault(name, []).append(agent.name)
     return users
 
@@ -325,6 +327,10 @@ during calls. Turn the admin's description into one tool.
   sheet_match_column (the column to search) and sheet_match_value (e.g. {{loan_id}}).
 - For http, http_url is the address if the admin gave one, else "https://example.com"; keep
   http_body empty unless a specific JSON shape was asked for. Never invent secrets.
+- If the tool should run after the call to record its results (not during the call), it
+  needs no params and may use {{summary}}, {{outcome}}, {{duration_seconds}}, {{agent_name}}
+  and the call's details in snake_case, e.g. {{promised_payment_date}}, {{paid_on}},
+  {{call_back_at}}, {{reason_for_difficulty}}.
 - description tells the agent exactly when to use the tool, in one or two sentences.
 Fill fields of the other type with empty values."""
 

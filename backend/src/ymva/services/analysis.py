@@ -2,20 +2,22 @@
 read from the transcript by Gemini and stored on the call."""
 
 import asyncio
+import re
 import uuid
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from google.genai import types
 from pydantic import BaseModel, Field, ValidationError, create_model
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ymva.config import get_settings
 from ymva.db import get_sessionmaker
 from ymva.logging import get_logger
-from ymva.models import Call, CallEvent, CallEventType
+from ymva.models import Call, CallDirection, CallEvent, CallEventType
 from ymva.services.builder import ask_gemini
 from ymva.services.integrations import load_ai_keys
+from ymva.services.tools import call_facts, load_tools, run_tool
 from ymva.voice.config import AgentConfig, Analysis
 
 log = get_logger(__name__)
@@ -125,8 +127,65 @@ async def analyze_call(call_id: uuid.UUID) -> None:
         await db.commit()
 
 
+def field_name(detail: str) -> str:
+    """'Promised payment date' -> promised_payment_date, for {{placeholders}}."""
+    return re.sub(r"[^a-z0-9]+", "_", detail.lower()).strip("_")
+
+
+def result_values(call: Call, analysis: Analysis) -> dict[str, str]:
+    """What a post-call tool can use: customer details, call facts and the results."""
+    when = (call.started_at or call.created_at).astimezone(ZoneInfo(get_settings().timezone))
+    phone = call.to_number if call.direction == CallDirection.OUTBOUND else call.from_number
+    values = {k: str(v) for k, v in (call.variables or {}).items()}
+    values |= call_facts(when, phone)
+    values |= {
+        "agent_name": call.agent_name or "",
+        "call_id": str(call.id),
+        "duration_seconds": str(call.duration_seconds or 0),
+        "outcome": call.outcome or "",
+        "summary": call.summary or "",
+    }
+    # Every detail the agent tracks, blank when the customer didn't give it.
+    values |= {field_name(d.name): call.extracted.get(d.name, "") for d in analysis.details}
+    return values
+
+
+async def send_results(call_id: uuid.UUID) -> None:
+    """Run the agent's after-call tools with the call's results; each run is logged on the call."""
+    async with get_sessionmaker()() as db:
+        call = await db.get(Call, call_id)
+        if call is None or call.outcome is None:
+            return
+        try:
+            analysis = AgentConfig.model_validate(call.agent_config).analysis
+        except ValidationError:
+            return
+        tools = await load_tools(db, analysis.send_to)
+        values = result_values(call, analysis)
+        seq = await db.scalar(select(func.max(CallEvent.seq)).where(CallEvent.call_id == call_id))
+        for tool in tools:
+            result = await run_tool(tool.type, tool.config, tool.secrets, values)
+            seq = (seq or 0) + 1
+            db.add(
+                CallEvent(
+                    call_id=call_id,
+                    seq=seq,
+                    type=CallEventType.TOOL_RESULT,
+                    content=f"Sent results to {tool.name}: "
+                    + ("ok" if result.get("ok") else str(result.get("error", "failed"))),
+                    data={"tool": tool.name, "after_call": True, "result": result},
+                )
+            )
+        await db.commit()
+
+
+async def _after_call(call_id: uuid.UUID) -> None:
+    await analyze_call(call_id)
+    await send_results(call_id)
+
+
 def schedule(call_id: uuid.UUID) -> None:
-    """Analyse the call in the background, after it has ended."""
-    task = asyncio.create_task(analyze_call(call_id))
+    """Analyse the call in the background, after it has ended, then send the results on."""
+    task = asyncio.create_task(_after_call(call_id))
     _running.add(task)
     task.add_done_callback(_running.discard)

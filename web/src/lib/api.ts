@@ -171,7 +171,7 @@ export interface AgentConfig {
   limits: { max_duration_seconds: number; silence_timeout_seconds: number };
   atmosphere: { room_tone: boolean; typing_while_thinking: boolean; volume: number };
   /** Written down after each call: one outcome and any of these details the customer gave. */
-  analysis: { outcomes: TrackedItem[]; details: TrackedItem[] };
+  analysis: { outcomes: TrackedItem[]; details: TrackedItem[]; send_to: string[] };
   /** Names of tools from the Tools page the agent may use during calls. */
   tools: string[];
 }

@@ -107,3 +107,37 @@ def test_cost_estimate_per_engine() -> None:
         "pipeline", "gemini-3.5-flash-lite", {"llm_prompt_tokens": 1e6, "stt_seconds": 60}
     )
     assert standard["gemini"] == 0.3 and standard["sarvam_stt"] > 0
+
+
+async def test_results_are_sent_to_after_call_tools(
+    admin_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent: list[dict[str, str]] = []
+
+    async def run_tool(kind: str, config: Any, secrets: Any, values: dict[str, str]) -> Any:
+        sent.append(values)
+        return {"ok": True}
+
+    monkeypatch.setattr(analysis, "run_tool", run_tool)
+    tool = {
+        "name": "log_result",
+        "description": "Record each call's result",
+        "type": "http",
+        "config": {"url": "https://crm.example.com/results"},
+    }
+    assert (await admin_client.post("/api/tools", json=tool)).status_code == 201
+    config = interest_reminder()
+    config.analysis.send_to = ["log_result"]
+    call_id = await _call([(CallEventType.USER_TURN, "I'll pay on the 20th")])
+    async with get_sessionmaker()() as db:
+        call = await db.get(Call, call_id)
+        assert call is not None
+        call.agent_config = config.model_dump(mode="json")
+        call.outcome, call.summary = "Promised to pay", "Will pay on the 20th."
+        call.extracted = {"Promised payment date": "2026-11-20"}
+        await db.commit()
+
+    await analysis.send_results(call_id)
+    assert sent[0]["promised_payment_date"] == "2026-11-20"
+    assert sent[0]["outcome"] == "Promised to pay" and sent[0]["customer_name"] == "Ramesh"
+    assert sent[0]["paid_on"] == ""  # tracked details not given are still there, empty

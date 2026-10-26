@@ -453,6 +453,47 @@ export function AgentEditor({
             descriptionPlaceholder="What to write, e.g. The date, as YYYY-MM-DD"
             onChange={(items) => update((d) => void (d.analysis.details = items))}
           />
+          <div className="flex flex-col gap-2">
+            <div>
+              <h3 className="text-[13px] font-medium">Send the results to</h3>
+              <p className="text-2xs text-muted">
+                After each call, these tools get the results. They can use {"{{summary}}"}, {"{{outcome}}"},{" "}
+                {"{{duration_seconds}}"}, {"{{call_time}}"}, the customer details and each detail above
+                {draft.analysis.details.length > 0 &&
+                  ` (${draft.analysis.details
+                    .map((d) => `{{${d.name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}}}`)
+                    .join(", ")})`}
+                .
+              </p>
+            </div>
+            {(tools.data ?? []).length === 0 ? (
+              <p className="text-[13px] text-muted">
+                No tools yet.{" "}
+                <Link href="/tools" className="underline underline-offset-4 hover:text-ink">
+                  Create one on the Tools page
+                </Link>
+                , e.g. one that adds a row to your results sheet.
+              </p>
+            ) : (
+              tools.data?.map((t) => (
+                <label key={t.id} className="flex items-center gap-3 text-[13px]">
+                  <input
+                    type="checkbox"
+                    checked={draft.analysis.send_to.includes(t.name)}
+                    onChange={(e) =>
+                      update((d) => {
+                        d.analysis.send_to = e.target.checked
+                          ? [...d.analysis.send_to, t.name]
+                          : d.analysis.send_to.filter((n) => n !== t.name);
+                      })
+                    }
+                  />
+                  <span className="font-mono font-medium">{t.name}</span>
+                  <span className="truncate text-muted">{t.description}</span>
+                </label>
+              ))
+            )}
+          </div>
         </div>
       </Panel>
 

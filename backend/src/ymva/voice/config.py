@@ -147,6 +147,9 @@ class Analysis(BaseModel):
         max_length=20,
     )
 
+    # Tools (e.g. a Sheets row, a CRM webhook) that receive the results after every call.
+    send_to: list[str] = Field(default_factory=list, max_length=10)
+
     @field_validator("outcomes", "details")
     @classmethod
     def _unique_names(cls, items: list[TrackedItem]) -> list[TrackedItem]:
