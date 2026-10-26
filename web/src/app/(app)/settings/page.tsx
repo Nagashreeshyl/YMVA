@@ -6,15 +6,17 @@ import { PageHeader } from "@/components/ui";
 import { useMe } from "@/lib/session";
 import { AccountSettings } from "./account";
 import { AuditLogList } from "./audit-log";
+import { HealthSettings } from "./health";
 import { TeamSettings } from "./team";
 
-type Tab = "team" | "audit" | "account";
+type Tab = "team" | "health" | "audit" | "account";
 
 export default function SettingsPage() {
   const { data: me } = useMe();
   const isAdmin = me?.role === "admin";
   const tabs: { id: Tab; label: string }[] = [
     ...(isAdmin ? [{ id: "team" as const, label: "Team" }] : []),
+    { id: "health", label: "Health & alerts" },
     { id: "audit", label: "Audit log" },
     { id: "account", label: "Your account" },
   ];
@@ -23,7 +25,10 @@ export default function SettingsPage() {
 
   return (
     <>
-      <PageHeader title="Settings" description="People, history of changes, and your sign-in." />
+      <PageHeader
+        title="Settings"
+        description="People, system health and alerts, history of changes, and your sign-in."
+      />
       <div
         role="tablist"
         aria-label="Settings sections"
@@ -51,6 +56,7 @@ export default function SettingsPage() {
       </div>
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
         {tab === "team" && isAdmin && <TeamSettings currentUserId={me.id} />}
+        {tab === "health" && <HealthSettings canEdit={isAdmin} />}
         {tab === "audit" && <AuditLogList />}
         {tab === "account" && <AccountSettings />}
       </div>

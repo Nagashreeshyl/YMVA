@@ -24,6 +24,7 @@ from ymva.api.routes import (
     integrations,
     numbers,
     overview,
+    system,
     telephony,
     tools,
     users,
@@ -32,7 +33,7 @@ from ymva.config import get_settings
 from ymva.db import get_engine, get_sessionmaker
 from ymva.logging import configure_logging, get_logger
 from ymva.redis import get_redis
-from ymva.services import dialer
+from ymva.services import dialer, drain, monitoring
 from ymva.services.bootstrap import ensure_admin
 
 log = get_logger(__name__)
@@ -46,12 +47,15 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     async with get_sessionmaker()() as session:
         await ensure_admin(session)
     log.info("ymva api started", version=__version__, environment=get_settings().environment)
+    await drain.stop_draining()  # this is the new process: calling can resume
     dialer_task = (
         asyncio.create_task(dialer.run_forever()) if get_settings().dialer_enabled else None
     )
+    monitor_task = asyncio.create_task(monitoring.run_forever())
     yield
     if dialer_task:
         dialer_task.cancel()
+    monitor_task.cancel()
     await get_redis().aclose()
     await get_engine().dispose()
 
@@ -130,6 +134,7 @@ def create_app() -> FastAPI:
         campaigns,
         tools,
         telephony,
+        system,
     ):
         api.include_router(module.router)
     app.include_router(api)

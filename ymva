@@ -3,12 +3,16 @@
 #
 #   ./ymva start [--domain voice.example.com]   Build and start the full stack (Docker)
 #   ./ymva start --tunnel                        Same, plus a temporary public HTTPS address for test calls
+#   ./ymva start --monitoring                    Also run Prometheus + Grafana (graphs; stays on)
 #   ./ymva stop | restart | status | logs [service]
 #   ./ymva reset-admin                           Reset admin to ADMIN_EMAIL / ADMIN_PASSWORD in .env
 #   ./ymva update                                Pull latest code and redeploy
 #   ./ymva backup                                Save a database backup to ./backups
+#   ./ymva verify-backup [file]                  Prove a backup restores (into a scratch database)
+#   ./ymva restore <file>                        Replace the database with a backup
 #   ./ymva dev                                   Run locally with hot reload (no Docker)
 #   ./ymva test                                  Run all checks and tests
+#   ./ymva simulate [--calls N] [--agent NAME]   Spoken test calls on a fake phone network (uses AI credit)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -105,12 +109,18 @@ cmd_start() {
     case "$1" in
       --domain) domain="${2:-}"; shift 2 ;;
       --tunnel) tunnel=1; shift ;;
+      --monitoring) monitoring=1; shift ;;
       *) fail "Unknown option: $1" ;;
     esac
   done
   need_docker
   FIRST_RUN=0
   ensure_env
+  if [ "${monitoring:-0}" = "1" ]; then
+    env_set COMPOSE_PROFILES monitoring
+    [ -n "$(env_get GRAFANA_PASSWORD)" ] || env_set GRAFANA_PASSWORD "$(rand 20)"
+    info "Grafana: ssh -L 3001:localhost:3001 <server>, then http://localhost:3001 (admin / GRAFANA_PASSWORD in .env)"
+  fi
   if [ -n "$domain" ]; then
     env_set SITE_ADDRESS "$domain"
     env_set PUBLIC_URL "https://$domain"
@@ -122,7 +132,9 @@ cmd_start() {
   fi
   bold "Starting YMVA..."
   if [ "$tunnel" = "1" ]; then
-    COMPOSE_PROFILES=tunnel compose up -d --build --remove-orphans
+    local profiles="tunnel" extra; extra="$(env_get COMPOSE_PROFILES)"
+    [ -n "$extra" ] && profiles="tunnel,$extra"  # keep monitoring on if it is
+    COMPOSE_PROFILES="$profiles" compose up -d --build --remove-orphans
     start_tunnel
   else
     compose up -d --build --remove-orphans
@@ -161,8 +173,50 @@ cmd_backup() {
   mkdir -p "$ROOT/backups" && chmod 700 "$ROOT/backups"
   umask 077
   local file; file="$ROOT/backups/ymva-$(date +%Y%m%d-%H%M%S).sql.gz"
-  compose exec -T postgres pg_dump -U ymva -d ymva --clean --if-exists | gzip >"$file"
+  compose exec -T postgres pg_dump -U ymva -d ymva --clean --if-exists </dev/null | gzip >"$file"
   bold "Backup saved: $file"
+}
+
+# Before restarting the API: pause new calls and let live ones finish, so no call is cut off.
+drain_calls() {
+  if docker_api_running; then
+    info "Letting live calls finish first (new calls are paused; at most ${DRAIN_WAIT:-900}s)..."
+    compose exec -T api ymva drain --wait "${DRAIN_WAIT:-900}" </dev/null || true
+  fi
+}
+
+newest_backup() { ls -t "$ROOT"/backups/*.sql.gz 2>/dev/null | head -1; }
+
+# Restores a backup into a throwaway database and counts what's in it; live data is untouched.
+cmd_verify_backup() {
+  need_docker
+  local file="${1:-$(newest_backup)}"
+  [ -n "$file" ] && [ -f "$file" ] || fail "No backup found in ./backups"
+  info "Restoring $(basename "$file") into a scratch database..."
+  compose exec -T postgres sh -c 'dropdb -U ymva --if-exists ymva_restore_check && createdb -U ymva ymva_restore_check' </dev/null
+  gunzip -c "$file" | compose exec -T postgres psql -q -U ymva -d ymva_restore_check -v ON_ERROR_STOP=1 >/dev/null \
+    || { compose exec -T postgres dropdb -U ymva --if-exists ymva_restore_check </dev/null; fail "The backup did not restore cleanly."; }
+  compose exec -T postgres psql -U ymva -d ymva_restore_check -Atc \
+    "select 'agents: ' || count(*) from agents union all select 'calls: ' || count(*) from calls union all select 'users: ' || count(*) from users union all select 'schema: ' || version_num from alembic_version" </dev/null
+  compose exec -T postgres dropdb -U ymva ymva_restore_check </dev/null
+  bold "Backup is good: $(basename "$file") restores cleanly."
+}
+
+# Replaces the live database with a backup (asks first; saves a backup of the current data).
+cmd_restore() {
+  need_docker
+  local file="${1:-}"
+  [ -n "$file" ] && [ -f "$file" ] || fail "Usage: ./ymva restore backups/<file>.sql.gz"
+  cmd_verify_backup "$file"
+  printf "This replaces ALL current data with %s. Type RESTORE to continue: " "$(basename "$file")"
+  local answer; read -r answer
+  [ "$answer" = "RESTORE" ] || fail "Cancelled."
+  cmd_backup  # in case you need to go back
+  drain_calls
+  compose stop api web
+  gunzip -c "$file" | compose exec -T postgres psql -q -U ymva -d ymva -v ON_ERROR_STOP=1 >/dev/null
+  compose up -d api web
+  wait_ready && bold "Restored $(basename "$file"). YMVA is running at $(public_url)"
 }
 
 cmd_update() {
@@ -170,8 +224,11 @@ cmd_update() {
   if git -C "$ROOT" remote get-url origin >/dev/null 2>&1; then
     git -C "$ROOT" pull --ff-only
   fi
+  bold "Building the new version (the current one keeps running)..."
+  compose build
   cmd_backup
-  compose up -d --build --remove-orphans
+  drain_calls
+  compose up -d --remove-orphans
   wait_ready && bold "Updated. YMVA is running at $(public_url)"
 }
 
@@ -200,8 +257,10 @@ cmd_reset_admin() {
 
 cmd_restart() {
   need_docker
-  # `up -d` (not `restart`) so edits to .env are applied.
+  drain_calls
+  # `up -d` (not `restart`) so edits to .env are applied; the app itself always restarts.
   compose up -d --remove-orphans
+  compose up -d --force-recreate --no-deps api web
   wait_ready && bold "YMVA is running at $(public_url)"
 }
 
@@ -240,7 +299,7 @@ cmd_test() {
   bold "All checks passed."
 }
 
-usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; }
 
 case "${1:-}" in
   start) shift; cmd_start "$@" ;;
@@ -251,8 +310,11 @@ case "${1:-}" in
   logs) need_docker; shift; compose logs -f --tail=200 "$@" ;;
   update) cmd_update ;;
   backup) cmd_backup ;;
+  verify-backup) shift; cmd_verify_backup "$@" ;;
+  restore) shift; cmd_restore "$@" ;;
   dev) cmd_dev ;;
   test) cmd_test ;;
+  simulate) need_docker; shift; compose exec -T api ymva simulate "$@" </dev/null ;;
   ""|-h|--help|help) usage ;;
   *) usage; exit 1 ;;
 esac

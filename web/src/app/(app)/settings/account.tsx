@@ -44,16 +44,37 @@ export function AccountSettings() {
       >
         <h2 className="text-[15px] font-semibold">Change password</h2>
         <Field label="Current password">
-          {(p) => <Input {...p} name="current" type="password" autoComplete="current-password" required />}
-        </Field>
-        <Field label="New password" hint="At least 10 characters. Other devices will be signed out.">
           {(p) => (
-            <Input {...p} name="new" type="password" autoComplete="new-password" required minLength={10} />
+            <Input
+              {...p}
+              name="current"
+              type="password"
+              autoComplete="current-password"
+              required
+            />
+          )}
+        </Field>
+        <Field
+          label="New password"
+          hint="At least 10 characters. Other devices will be signed out."
+        >
+          {(p) => (
+            <Input
+              {...p}
+              name="new"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={10}
+            />
           )}
         </Field>
         {change.isError && <ErrorNotice error={change.error} />}
         {change.isSuccess && (
-          <p role="status" className="flex items-center gap-2 text-[13px] text-success">
+          <p
+            role="status"
+            className="flex items-center gap-2 text-[13px] text-success"
+          >
             <CheckCircle2 className="size-4" aria-hidden /> Password changed.
           </p>
         )}

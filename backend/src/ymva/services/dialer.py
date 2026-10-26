@@ -7,6 +7,7 @@ process dials, so contacts are never called twice.
 """
 
 import asyncio
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -30,6 +31,7 @@ from ymva.models import (
 from ymva.redis import get_redis
 from ymva.services.analysis import NO_CONVERSATION
 from ymva.services.calls import CallSetupError, LinesBusyError
+from ymva.services.drain import is_draining
 from ymva.services.outbound import start_outbound_call
 from ymva.telephony import TelephonyError
 
@@ -37,6 +39,7 @@ log = get_logger(__name__)
 
 TICK_SECONDS = 5.0
 LOCK_KEY = "dialer:lock"
+DIALER_TICK_KEY = "dialer:last_tick"
 # A call the provider never reported back on (lost webhook) counts as unanswered after this.
 RING_TIMEOUT = timedelta(minutes=3)
 # A connected call's outcome is written a few seconds after it ends; wait for it this long.
@@ -186,6 +189,8 @@ async def tick(now: datetime | None = None) -> None:
     now = now or datetime.now(UTC)
     async with get_sessionmaker()() as db:
         await _settle_calling(db, now)
+        if await is_draining():
+            return  # an update is waiting for live calls to finish
         running = list(
             await db.scalars(select(Campaign).where(Campaign.status == CampaignStatus.RUNNING))
         )
@@ -206,6 +211,7 @@ async def run_forever() -> None:
             if await redis.set(LOCK_KEY, "1", nx=True, ex=int(TICK_SECONDS * 3)):
                 try:
                     await tick()
+                    await redis.set(DIALER_TICK_KEY, str(time.time()))  # for health checks
                 finally:
                     await redis.delete(LOCK_KEY)
         except Exception:

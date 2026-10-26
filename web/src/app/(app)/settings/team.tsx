@@ -3,12 +3,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Users } from "lucide-react";
 import { useState } from "react";
-import { Badge, Button, EmptyState, ErrorNotice, Field, Input, Select, Skeleton } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  ErrorNotice,
+  Field,
+  Input,
+  Select,
+  Skeleton,
+} from "@/components/ui";
 import { useConfirm } from "@/components/dialog";
 import { api, type Role, type User } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
 
-const ROLE_LABEL: Record<Role, string> = { admin: "Admin", viewer: "View only" };
+const ROLE_LABEL: Record<Role, string> = {
+  admin: "Admin",
+  viewer: "View only",
+};
 
 function AddPersonForm({ onDone }: { onDone: () => void }) {
   const queryClient = useQueryClient();
@@ -36,9 +48,16 @@ function AddPersonForm({ onDone }: { onDone: () => void }) {
       }}
     >
       <h2 className="text-[15px] font-semibold sm:col-span-2">Add a person</h2>
-      <Field label="Name">{(p) => <Input {...p} name="name" required autoFocus />}</Field>
-      <Field label="Email">{(p) => <Input {...p} name="email" type="email" required />}</Field>
-      <Field label="Access" hint="View only can see everything but change nothing.">
+      <Field label="Name">
+        {(p) => <Input {...p} name="name" required autoFocus />}
+      </Field>
+      <Field label="Email">
+        {(p) => <Input {...p} name="email" type="email" required />}
+      </Field>
+      <Field
+        label="Access"
+        hint="View only can see everything but change nothing."
+      >
         {(p) => (
           <Select {...p} name="role" defaultValue="viewer">
             <option value="viewer">View only</option>
@@ -46,9 +65,19 @@ function AddPersonForm({ onDone }: { onDone: () => void }) {
           </Select>
         )}
       </Field>
-      <Field label="Temporary password" hint="At least 10 characters. Share it privately.">
+      <Field
+        label="Temporary password"
+        hint="At least 10 characters. Share it privately."
+      >
         {(p) => (
-          <Input {...p} name="password" type="password" autoComplete="new-password" required minLength={10} />
+          <Input
+            {...p}
+            name="password"
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={10}
+          />
         )}
       </Field>
       {create.isError && (
@@ -73,8 +102,9 @@ function PersonRow({ user, isSelf }: { user: User; isSelf: boolean }) {
   const queryClient = useQueryClient();
   const [resetting, setResetting] = useState(false);
   const update = useMutation({
-    mutationFn: (body: Partial<{ role: Role; is_active: boolean; password: string }>) =>
-      api<User>(`/users/${user.id}`, { method: "PATCH", json: body }),
+    mutationFn: (
+      body: Partial<{ role: Role; is_active: boolean; password: string }>,
+    ) => api<User>(`/users/${user.id}`, { method: "PATCH", json: body }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
       setResetting(false);
@@ -114,13 +144,19 @@ function PersonRow({ user, isSelf }: { user: User; isSelf: boolean }) {
           </Select>
           {!isSelf && (
             <>
-              <Button variant="secondary" size="sm" onClick={() => setResetting((v) => !v)}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setResetting((v) => !v)}
+              >
                 Reset password
               </Button>
               <Button
                 variant={user.is_active ? "danger" : "secondary"}
                 size="sm"
-                loading={update.isPending && update.variables?.is_active !== undefined}
+                loading={
+                  update.isPending && update.variables?.is_active !== undefined
+                }
                 onClick={async () => {
                   if (user.is_active) {
                     const { ok } = await confirm({
@@ -145,12 +181,17 @@ function PersonRow({ user, isSelf }: { user: User; isSelf: boolean }) {
           className="flex flex-wrap items-end gap-2 sm:pl-[52px]"
           onSubmit={(e) => {
             e.preventDefault();
-            const password = String(new FormData(e.currentTarget).get("password") ?? "");
+            const password = String(
+              new FormData(e.currentTarget).get("password") ?? "",
+            );
             update.mutate({ password });
           }}
         >
           <div className="w-full max-w-xs">
-            <Field label={`New password for ${user.name}`} hint="They will be signed out everywhere.">
+            <Field
+              label={`New password for ${user.name}`}
+              hint="They will be signed out everywhere."
+            >
               {(p) => (
                 <Input
                   {...p}
@@ -176,14 +217,17 @@ function PersonRow({ user, isSelf }: { user: User; isSelf: boolean }) {
 
 export function TeamSettings({ currentUserId }: { currentUserId: string }) {
   const [adding, setAdding] = useState(false);
-  const users = useQuery({ queryKey: ["users"], queryFn: () => api<User[]>("/users") });
+  const users = useQuery({
+    queryKey: ["users"],
+    queryFn: () => api<User[]>("/users"),
+  });
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-[60ch] text-muted">
-          Admins can change everything. View-only people see calls, recordings and results but can&apos;t
-          change agents or settings.
+          Admins can change everything. View-only people see calls, recordings
+          and results but can&apos;t change agents or settings.
         </p>
         {!adding && (
           <Button onClick={() => setAdding(true)}>

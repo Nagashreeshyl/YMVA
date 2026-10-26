@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ymva.models import Agent, Call, CallDirection, CallStatus, PhoneNumber, ProviderAccount
 from ymva.services.calls import CallSetupError, check_capacity, runnable_version, string_variables
+from ymva.services.drain import is_draining
 from ymva.services.integrations import load_ai_keys, telephony_client, webhook_urls
 from ymva.telephony import TelephonyError
 from ymva.voice import greeting
@@ -19,6 +20,8 @@ async def start_outbound_call(
     """Create the call and ask the provider to dial. Raises CallSetupError when the call can't
     start (no published version, lines busy, number off) and TelephonyError when the provider
     refuses; in that case the call is saved as failed. The caller commits."""
+    if await is_draining():
+        raise CallSetupError("YMVA is restarting for an update. Try again in a few minutes.")
     account = await db.get(ProviderAccount, number.provider_account_id)
     if account is None or not account.is_active or not number.is_active:
         raise CallSetupError("This number or its account is turned off")

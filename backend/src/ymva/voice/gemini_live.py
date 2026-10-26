@@ -45,6 +45,15 @@ class ResilientGeminiLive(GeminiLiveLLMService):
         self._note_after_reconnect = REPEAT_NOTE
         await self._reconnect()
 
+    async def _connection_task_handler(self, config: Any) -> None:
+        # Pipecat only handles errors after connecting; a refused connect (quota exceeded,
+        # bad key) would vanish into the log. Reported, it shows on the call and in alerts.
+        try:
+            await super()._connection_task_handler(config)
+        except Exception as exc:
+            if not self._disconnecting:
+                await self.push_error(error_msg=f"Gemini Live couldn't connect: {exc}")
+
     async def _handle_server_message(self, message: Any) -> None:
         cancellation = getattr(message, "tool_call_cancellation", None)
         if cancellation and cancellation.ids:

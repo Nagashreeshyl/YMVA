@@ -18,6 +18,10 @@
 		max_size 25MB
 	}
 
+	# Metrics are for Prometheus inside the server only.
+	@metrics path /api/metrics
+	respond @metrics 404
+
 	@api path /api/*
 	handle @api {
 		reverse_proxy api:8000

@@ -13,16 +13,19 @@ export function AuditLogList() {
   const [offset, setOffset] = useState(0);
   const logs = useQuery({
     queryKey: ["audit-logs", offset],
-    queryFn: () => api<Page<AuditLog>>(`/audit-logs?limit=${PAGE_SIZE}&offset=${offset}`),
+    queryFn: () =>
+      api<Page<AuditLog>>(`/audit-logs?limit=${PAGE_SIZE}&offset=${offset}`),
     placeholderData: keepPreviousData,
   });
 
   if (logs.isPending) return <Skeleton className="h-64 rounded-xl" />;
-  if (logs.isError) return <ErrorNotice error={logs.error} onRetry={() => logs.refetch()} />;
+  if (logs.isError)
+    return <ErrorNotice error={logs.error} onRetry={() => logs.refetch()} />;
   if (logs.data.total === 0) {
     return (
       <EmptyState icon={History} title="No activity yet">
-        Every sign-in and every change to agents, numbers, tools and people is recorded here.
+        Every sign-in and every change to agents, numbers, tools and people is
+        recorded here.
       </EmptyState>
     );
   }
@@ -32,7 +35,10 @@ export function AuditLogList() {
     <div className="flex flex-col gap-4">
       <ol className="divide-y divide-line rounded-xl border border-line">
         {items.map((log) => (
-          <li key={log.id} className="flex flex-col gap-1 px-5 py-3.5 sm:flex-row sm:items-baseline sm:gap-6">
+          <li
+            key={log.id}
+            className="flex flex-col gap-1 px-5 py-3.5 sm:flex-row sm:items-baseline sm:gap-6"
+          >
             <div className="min-w-0 flex-1">
               <p>{log.summary}</p>
               {Object.keys(log.changes).length > 0 && (
@@ -40,7 +46,9 @@ export function AuditLogList() {
                   {Object.entries(log.changes).map(([field, change]) => (
                     <li key={field}>
                       {field.replace(/_/g, " ")}:{" "}
-                      {Array.isArray(change) ? `${String(change[0])} → ${String(change[1])}` : String(change)}
+                      {Array.isArray(change)
+                        ? `${String(change[0])} → ${String(change[1])}`
+                        : String(change)}
                     </li>
                   ))}
                 </ul>
@@ -57,7 +65,8 @@ export function AuditLogList() {
       </ol>
       <div className="flex items-center justify-between text-[13px] text-muted">
         <span className="tabular">
-          {formatNumber(offset + 1)}–{formatNumber(offset + items.length)} of {formatNumber(total)}
+          {formatNumber(offset + 1)}–{formatNumber(offset + items.length)} of{" "}
+          {formatNumber(total)}
         </span>
         <div className="flex gap-2">
           <Button

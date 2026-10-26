@@ -1,6 +1,6 @@
 # YMVA — Yellow Metal Voice Agent: Architecture & Build Plan
 
-Status: Phase 0 and Phase 1 (voice core) built 2026-10-25 · Phase 1 awaits real-call testing with API keys · next: Phase 2 (agent builder)
+Status (2026-10-26): Phases 0–6 built. Phase 6 load test: 4 simulated calls pass; at ~8–10 simultaneous calls the current Gemini key hits its quota (raise the tier). Server measured at ~0.1 core and ~60 MB per call, ~10 calls per API process (`API_WORKERS`). Not done: Asterisk SIP, do-not-call list, tests with real provider accounts.
 Decisions locked: fresh project on **Pipecat** (not a Dograh fork; Dograh is reference only).
 
 ---

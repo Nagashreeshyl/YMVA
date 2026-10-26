@@ -18,6 +18,7 @@ class TelephonyProvider(StrEnum):
     TELNYX = "telnyx"
     VONAGE = "vonage"
     SIP = "sip"
+    SIMULATOR = "simulator"  # `ymva simulate`: regression and load tests
 
 
 class ProviderAccount(UUIDPk, Timestamps, Base):

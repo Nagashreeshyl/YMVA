@@ -72,6 +72,11 @@ Forgot the password? Set `ADMIN_PASSWORD` in `.env` and run `./ymva reset-admin`
 
 Design rules for the dashboard are in [DESIGN.md](DESIGN.md) (Yellow Metal brand) and [PRODUCT.md](PRODUCT.md); UI work uses the Impeccable skill in `.claude/skills/impeccable`.
 
+## Running it on a server
+
+See [docs/DEPLOY.md](docs/DEPLOY.md): server sizing, VPS and AWS setup, updates without dropped calls,
+backups, monitoring and alerts, and `./ymva simulate` for regression and load tests.
+
 ## Security notes
 
 - `.env` holds all secrets and is never committed. Back it up somewhere safe: without `ENCRYPTION_KEY`, saved provider credentials can't be decrypted.

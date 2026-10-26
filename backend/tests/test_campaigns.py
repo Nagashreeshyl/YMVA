@@ -134,3 +134,30 @@ async def test_start_needs_published_agent_and_contacts(
     assert resp.status_code == 400 and "contacts" in resp.json()["detail"]
     async with get_sessionmaker()() as db:
         assert (await db.get(Campaign, campaign["id"])) is not None
+
+
+async def test_draining_pauses_new_calls(
+    admin_client: httpx.AsyncClient, placed: list[dict[str, Any]]
+) -> None:
+    from ymva.cli import _drain
+    from ymva.services import drain
+
+    campaign, setup = await _campaign(admin_client)
+    await admin_client.post(f"/api/campaigns/{campaign['id']}/contacts", json={"csv": CSV})
+    await admin_client.post(f"/api/campaigns/{campaign['id']}/start")
+    await drain.start_draining(60)
+    await dialer.tick(OPEN)
+    assert placed == []  # the campaign waits while an update drains
+    resp = await admin_client.post(
+        "/api/calls/outbound",
+        json={
+            "agent_id": setup["agent"]["id"],
+            "from_number_id": setup["number"]["id"],
+            "to": "+919845012345",
+        },
+    )
+    assert resp.status_code == 400 and "restarting" in resp.json()["detail"]
+    assert await _drain(1) == 0  # nothing live: the restart can go ahead at once
+    await drain.stop_draining()
+    await dialer.tick(OPEN)
+    assert len(placed) == 1

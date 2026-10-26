@@ -25,7 +25,8 @@ services:
       timeout: 5s
       retries: 20
 
-  # Daily compressed database backups into ./backups, kept for 14 days.
+  # Daily compressed database backups into ./backups (kept 14 days), plus a copy of new call
+  # recordings in ./backups/recordings.
   backup:
     <<: *defaults
     image: pgvector/pgvector:0.8.1-pg17
@@ -36,6 +37,7 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - ./backups:/backups
+      - recordings:/recordings:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -48,6 +50,8 @@ services:
             rm -f "$$file.tmp"; echo "backup FAILED" >&2
           fi
           find /backups -name 'auto-*.sql.gz' -mtime +14 -delete
+          mkdir -p /backups/recordings && cp -Rpu /recordings/. /backups/recordings/ \
+            && echo "recordings copied" || echo "recordings copy FAILED" >&2
           sleep 86400
         done
     depends_on:
@@ -77,6 +81,7 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
     volumes:
       - recordings:/data/recordings
+      - ./backups:/backups:ro  # read-only: so health checks can see the newest backup's age
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -116,9 +121,37 @@ services:
     depends_on:
       - caddy
 
+  # Optional history graphs: ./ymva start --monitoring, then open Grafana through an SSH tunnel
+  # (ssh -L 3001:localhost:3001 your-server) at http://localhost:3001.
+  prometheus:
+    <<: *defaults
+    image: prom/prometheus:v3.5.0
+    profiles: [monitoring]
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=90d"]
+    volumes:
+      - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    <<: *defaults
+    image: grafana/grafana:12.1.0
+    profiles: [monitoring]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-change-me}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "127.0.0.1:3001:3000"  # this server only
+    volumes:
+      - ./deploy/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on: [prometheus]
+
 volumes:
   recordings:
   postgres-data:
   redis-data:
   caddy-data:
   caddy-config:
+  prometheus-data:
+  grafana-data:
