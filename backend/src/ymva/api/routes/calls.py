@@ -71,6 +71,7 @@ class CallOut(BaseModel):
     end_reason: str | None
     outcome: str | None
     summary: str | None
+    cost_total: float | None  # estimated AI cost in USD
     languages: list[str]
 
 
@@ -120,6 +121,7 @@ def _call_out(call: Call, agent_names: dict[uuid.UUID, str]) -> dict[str, Any]:
         "end_reason": call.end_reason,
         "outcome": call.outcome,
         "summary": call.summary,
+        "cost_total": float(call.cost_total) if call.cost_total is not None else None,
         "languages": call.languages or [],
     }
 

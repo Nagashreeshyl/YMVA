@@ -5,6 +5,7 @@ import statistics
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from pipecat.frames.frames import (
@@ -23,6 +24,7 @@ from pipecat.observers.base_observer import BaseObserver, FramePushed
 from ymva.db import get_sessionmaker
 from ymva.logging import get_logger
 from ymva.models import Call, CallEvent, CallEventType, CallStatus
+from ymva.voice.pricing import call_cost
 
 log = get_logger(__name__)
 
@@ -52,6 +54,8 @@ class MetricsObserver(BaseObserver):
         self.usage: dict[str, float] = {
             "llm_prompt_tokens": 0,
             "llm_completion_tokens": 0,
+            "llm_input_audio_tokens": 0,
+            "llm_output_audio_tokens": 0,
             "tts_characters": 0,
             "stt_seconds": 0,
         }
@@ -74,6 +78,8 @@ class MetricsObserver(BaseObserver):
                 elif isinstance(item, LLMUsageMetricsData):
                     self.usage["llm_prompt_tokens"] += item.value.prompt_tokens or 0
                     self.usage["llm_completion_tokens"] += item.value.completion_tokens or 0
+                    self.usage["llm_input_audio_tokens"] += item.value.input_audio_tokens or 0
+                    self.usage["llm_output_audio_tokens"] += item.value.output_audio_tokens or 0
                 elif isinstance(item, TTSUsageMetricsData):
                     self.usage["tts_characters"] += item.value
                 elif isinstance(item, STTUsageMetricsData):
@@ -172,7 +178,9 @@ class CallRecorder:
             call.languages = self.languages
             if metrics:
                 call.latency = metrics.latency_report()
-                call.cost_breakdown = {"usage": metrics.usage}
+                cost = call_cost(call.agent_config, metrics.usage)
+                call.cost_breakdown = {"usage": metrics.usage, "cost_usd": cost}
+                call.cost_total = Decimal(str(cost["total"]))
             if error:
                 call.error = error[:2000]
             if recording_key:

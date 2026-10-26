@@ -238,6 +238,13 @@ export function CallView() {
                 value={response ? `${(response.p50_ms / 1000).toFixed(2)} s` : "—"}
                 note={response ? `typical · slowest ${(response.p95_ms / 1000).toFixed(2)} s` : undefined}
               />
+              {c.cost_total !== null && (
+                <Metric
+                  label="AI cost (estimate)"
+                  value={`$${c.cost_total.toFixed(4)}`}
+                  note={`≈ ₹${(c.cost_total * 88).toFixed(2)} · phone charges not included`}
+                />
+              )}
               {usage && (
                 <Metric
                   label="AI usage"

@@ -87,3 +87,23 @@ async def test_call_without_customer_speech_needs_no_ai(
         call = await db.get(Call, call_id)
         assert call is not None and call.outcome == analysis.NO_CONVERSATION
     assert _fake_gemini == []
+
+
+def test_cost_estimate_per_engine() -> None:
+    from ymva.voice.pricing import estimate
+
+    live = estimate(
+        "gemini_live",
+        "",
+        {
+            "llm_input_audio_tokens": 1e6,
+            "llm_prompt_tokens": 1e6,
+            "llm_completion_tokens": 1e6,
+            "llm_output_audio_tokens": 1e6,
+        },
+    )
+    assert live["total"] == 15.0  # $3 audio in + $12 audio out per 1M
+    standard = estimate(
+        "pipeline", "gemini-3.5-flash-lite", {"llm_prompt_tokens": 1e6, "stt_seconds": 60}
+    )
+    assert standard["gemini"] == 0.3 and standard["sarvam_stt"] > 0

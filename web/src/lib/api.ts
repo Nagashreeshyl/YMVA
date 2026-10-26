@@ -249,6 +249,8 @@ export interface CallSummary {
   end_reason: string | null;
   outcome: string | null;
   summary: string | null;
+  /** Estimated AI cost in USD (phone charges not included). */
+  cost_total: number | null;
   languages: string[];
 }
 
