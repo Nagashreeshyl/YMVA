@@ -28,6 +28,8 @@ import {
 } from "@/components/ui";
 import {
   api,
+  type AgentDetail,
+  type AgentSummary,
   type HttpToolConfig,
   type SheetsToolConfig,
   type ToolDef,
@@ -35,6 +37,7 @@ import {
   type ToolType,
 } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
+import { detectVariables } from "@/lib/variables";
 import { useMe } from "@/lib/session";
 
 type Draft = Omit<
@@ -108,6 +111,19 @@ function ToolForm({
       : blankDraft(),
   );
   const [brief, setBrief] = useState("");
+  // Which agent the tool is for: its customer details become placeholders, and it's switched on there.
+  const [agentId, setAgentId] = useState("");
+  const agents = useQuery({
+    queryKey: ["agents", "active"],
+    queryFn: () => api<AgentSummary[]>("/agents"),
+    enabled: !tool,
+  });
+  const agent = useQuery({
+    queryKey: ["agent", agentId],
+    queryFn: () => api<AgentDetail>(`/agents/${agentId}`),
+    enabled: Boolean(agentId),
+  });
+  const agentDetails = agent.data ? detectVariables(agent.data.config) : [];
   // Only sent when typed: stored secrets are never shown again.
   const [keyJson, setKeyJson] = useState("");
   const [secretHeaders, setSecretHeaders] = useState<
@@ -129,7 +145,7 @@ function ToolForm({
     mutationFn: () =>
       api<Draft>("/tools/generate", {
         method: "POST",
-        json: { description: brief },
+        json: { description: brief, agent_id: agentId || null },
       }),
     onSuccess: (generated) => setDraft({ ...generated, is_active: true }),
   });
@@ -153,7 +169,11 @@ function ToolForm({
     mutationFn: () => {
       let body: Record<string, unknown>;
       try {
-        body = { ...draft, secrets: secrets() };
+        body = {
+          ...draft,
+          secrets: secrets(),
+          agent_id: saved ? null : agentId || null,
+        };
       } catch {
         throw new Error(
           "The service account key isn't valid JSON. Paste the whole file.",
@@ -196,6 +216,41 @@ function ToolForm({
           description="Say what it should do in plain words and the AI fills in the form below. You can also fill it in yourself."
         >
           <div className="flex flex-col gap-3">
+            <Field
+              label="Which agent is this tool for?"
+              hint="The tool can use that agent's customer details, and it's switched on for the agent when you create it."
+            >
+              {(p) => (
+                <Select
+                  {...p}
+                  value={agentId}
+                  onChange={(e) => setAgentId(e.target.value)}
+                >
+                  <option value="">Choose an agent…</option>
+                  {agents.data?.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            {agentDetails.length > 0 && (
+              <p className="flex flex-wrap items-center gap-1.5 text-2xs text-muted">
+                Available from {agent.data?.name}:
+                {[
+                  ...agentDetails,
+                  "call_date",
+                  "call_time",
+                  "customer_phone",
+                ].map((v) => (
+                  <code
+                    key={v}
+                    className="rounded bg-surface px-1.5 py-0.5 font-mono text-ink"
+                  >{`{{${v}}}`}</code>
+                ))}
+              </p>
+            )}
             <Textarea
               aria-label="What the tool should do"
               rows={3}

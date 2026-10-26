@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import select
 
 from ymva.api.deps import AdminUser, CurrentUser, DbSession, client_ip
+from ymva.api.routes.agents import _latest
 from ymva.models import Agent, AgentVersion, Tool, ToolType
 from ymva.redis import get_redis
 from ymva.security import decrypt_json, encrypt_json
@@ -27,6 +28,7 @@ from ymva.services.tools import (
     run_tool,
     secret_hint,
 )
+from ymva.voice.config import AgentConfig, detected_variables
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 
@@ -42,6 +44,8 @@ class ToolIn(BaseModel):
     # Omit to keep the stored secrets; send {} to remove them.
     secrets: dict[str, Any] | None = None
     is_active: bool = True
+    # On create: also switch the tool on for this agent (in its draft).
+    agent_id: uuid.UUID | None = None
 
     @field_validator("name")
     @classmethod
@@ -71,6 +75,8 @@ class TestIn(BaseModel):
 
 class GenerateIn(BaseModel):
     description: str = Field(min_length=10, max_length=4000)
+    # The agent the tool is for: its customer details become the tool's {{placeholders}}.
+    agent_id: uuid.UUID | None = None
 
 
 def _secrets(tool: Tool) -> dict[str, Any] | None:
@@ -106,6 +112,36 @@ def _out(tool: Tool, used_by: dict[str, list[str]]) -> ToolOut:
     )
 
 
+# How the form names each setting, so errors point at the right box.
+FIELD_LABELS = {
+    "spreadsheet": "Sheet link",
+    "sheet": "Tab",
+    "header": "Column title",
+    "match_column": "Column to search",
+    "url": "URL",
+    "service_account": "Service account key",
+}
+PLAIN_ERRORS = {
+    ("spreadsheet", "string_too_short"): "Paste the link to your Google Sheet",
+    ("url", "string_pattern_mismatch"): "The URL must start with https:// or http://",
+    ("header", "string_too_short"): "Every column needs a title",
+}
+
+
+def _problems(exc: ValidationError) -> str:
+    lines = []
+    for error in exc.errors():
+        field = next((str(p) for p in reversed(error["loc"]) if isinstance(p, str)), "")
+        message = PLAIN_ERRORS.get((field, error["type"]), error["msg"])
+        label = FIELD_LABELS.get(field)
+        lines.append(
+            f"{label}: {message}"
+            if label and message != PLAIN_ERRORS.get((field, error["type"]))
+            else message
+        )
+    return "; ".join(dict.fromkeys(lines))
+
+
 def _apply(tool: Tool, body: ToolIn) -> None:
     try:
         config = CONFIG_TYPES[body.type].model_validate(body.config).model_dump()
@@ -115,13 +151,28 @@ def _apply(tool: Tool, body: ToolIn) -> None:
             else None
         )
     except ValidationError as exc:
-        problems = "; ".join(e["msg"] for e in exc.errors())
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, problems) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, _problems(exc)) from exc
     tool.name, tool.description, tool.type = body.name, body.description, ToolType(body.type)
     tool.config, tool.is_active = config, body.is_active
     tool.parameters_schema = {"params": [p.model_dump() for p in body.params]}
     if body.secrets is not None:
         tool.encrypted_secrets = encrypt_json(secrets) if secrets else None
+
+
+async def _agent_config(db: DbSession, agent_id: uuid.UUID) -> tuple[Agent, dict[str, Any]]:
+    """The agent and the config its editor shows (draft, else latest version)."""
+    agent = await db.get(Agent, agent_id)
+    if agent is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    latest = await _latest(db, agent.id)
+    return agent, agent.draft_config if agent.draft_config is not None else latest.config
+
+
+async def _switch_on(db: DbSession, agent_id: uuid.UUID, name: str) -> None:
+    agent, config = await _agent_config(db, agent_id)
+    if name not in config.get("tools", []):
+        agent.draft_config = {**config, "tools": [*config.get("tools", []), name]}
+        agent.draft_updated_at = datetime.now(UTC)
 
 
 async def _get(db: DbSession, tool_id: uuid.UUID) -> Tool:
@@ -150,6 +201,8 @@ async def create_tool(body: ToolIn, request: Request, admin: AdminUser, db: DbSe
     _apply(tool, body)
     db.add(tool)
     await db.flush()
+    if body.agent_id is not None:
+        await _switch_on(db, body.agent_id, tool.name)
     await audit.record(
         db,
         actor=admin,
@@ -285,7 +338,16 @@ async def generate_tool(body: GenerateIn, admin: AdminUser, db: DbSession) -> di
     keys = await load_ai_keys(db)
     if "google" not in keys:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Add the Google (Gemini) API key first")
-    content = types.Content(role="user", parts=[types.Part(text=body.description)])
+    request = body.description
+    if body.agent_id is not None:
+        agent, agent_config = await _agent_config(db, body.agent_id)
+        known = detected_variables(AgentConfig.model_validate(agent_config))
+        request += (
+            f"\n\nThe tool is for the agent '{agent.name}'. Customer details it already has"
+            f" for every call (use these exact names): "
+            + (", ".join(f"{{{{{v}}}}}" for v in known) or "none")
+        )
+    content = types.Content(role="user", parts=[types.Part(text=request)])
     try:
         draft = await ask_gemini(keys["google"], BUILDER_GUIDE, [content], GeneratedTool)
     except BuilderError as exc:

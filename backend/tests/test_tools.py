@@ -171,3 +171,20 @@ async def test_tool_builder_returns_a_form_to_review(
     assert draft["name"] == "save_promise" and draft["config"]["action"] == "append_row"
     assert draft["placeholders"] == ["promised_date"]
     assert (await admin_client.get("/api/tools")).json() == []  # nothing saved yet
+
+
+async def test_missing_sheet_link_is_explained_and_agent_gets_tool(
+    admin_client: httpx.AsyncClient,
+) -> None:
+    no_link = json.loads(json.dumps(SHEET_TOOL))
+    no_link["config"]["spreadsheet"] = ""
+    resp = await admin_client.post("/api/tools", json=no_link)
+    assert (
+        resp.status_code == 422 and resp.json()["detail"] == "Paste the link to your Google Sheet"
+    )
+
+    agent = (await admin_client.post("/api/agents", json={"name": "Reminder"})).json()
+    resp = await admin_client.post("/api/tools", json={**SHEET_TOOL, "agent_id": agent["id"]})
+    assert resp.status_code == 201, resp.text
+    agent = (await admin_client.get(f"/api/agents/{agent['id']}")).json()
+    assert agent["config"]["tools"] == ["save_promise"] and agent["has_draft_changes"]
