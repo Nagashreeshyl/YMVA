@@ -154,6 +154,8 @@ async def test_tool_builder_returns_a_form_to_review(
                 "http_method": "POST",
                 "http_url": "",
                 "http_body": "",
+                "db_query": "",
+                "db_mode": "read",
             }
         )
 
@@ -188,3 +190,46 @@ async def test_missing_sheet_link_is_explained_and_agent_gets_tool(
     assert resp.status_code == 201, resp.text
     agent = (await admin_client.get(f"/api/agents/{agent['id']}")).json()
     assert agent["config"]["tools"] == ["save_promise"] and agent["has_draft_changes"]
+
+
+async def test_database_tool_binds_values_and_respects_read_only() -> None:
+    import os
+
+    import asyncpg
+
+    url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
+    conn = await asyncpg.connect(url)
+    await conn.execute(
+        "drop table if exists zz_loans; create table zz_loans"
+        " (loan_id text primary key, interest_due numeric, promised date)"
+    )
+    await conn.execute("insert into zz_loans values ('YM1', 2450.50, null)")
+    secrets = {"connection": url}
+    try:
+        read = {"query": "select interest_due from zz_loans where loan_id = {{loan_id}}"}
+        found = await tools_service.run_tool("database", read, secrets, {"loan_id": "YM1"})
+        assert found == {"ok": True, "rows": [{"interest_due": "2450.50"}], "count": 1}
+        sneaky = await tools_service.run_tool(
+            "database", read, secrets, {"loan_id": "x' or '1'='1"}
+        )
+        assert sneaky["rows"] == []  # the value is data, never SQL
+
+        update = "update zz_loans set promised = {{promised_date}} where loan_id = {{loan_id}}"
+        blocked = await tools_service.run_tool(
+            "database",
+            {"query": update},
+            secrets,
+            {"loan_id": "YM1", "promised_date": "2026-11-20"},
+        )
+        assert not blocked["ok"] and "read-only" in blocked["error"]
+        done = await tools_service.run_tool(
+            "database",
+            {"query": update, "mode": "write"},
+            secrets,
+            {"loan_id": "YM1", "promised_date": "2026-11-20"},
+        )
+        assert done["result"] == "UPDATE 1"
+        assert str(await conn.fetchval("select promised from zz_loans")) == "2026-11-20"
+    finally:
+        await conn.execute("drop table zz_loans")
+        await conn.close()

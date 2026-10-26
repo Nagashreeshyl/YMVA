@@ -32,7 +32,7 @@ from ymva.voice.config import AgentConfig, detected_variables
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 
-SUPPORTED = Literal["google_sheets", "http"]
+SUPPORTED = Literal["google_sheets", "http", "database"]
 
 
 class ToolIn(BaseModel):
@@ -122,11 +122,14 @@ FIELD_LABELS = {
     "match_column": "Column to search",
     "url": "URL",
     "service_account": "Service account key",
+    "query": "SQL query",
+    "connection": "Database connection",
 }
 PLAIN_ERRORS = {
     ("spreadsheet", "string_too_short"): "Paste the link to your Google Sheet",
     ("url", "string_pattern_mismatch"): "The URL must start with https:// or http://",
     ("header", "string_too_short"): "Every column needs a title",
+    ("connection", "string_pattern_mismatch"): "The connection must start with postgresql://",
 }
 
 
@@ -312,13 +315,18 @@ class GeneratedTool(BaseModel):
     http_method: Literal["GET", "POST", "PUT", "PATCH"]
     http_url: str
     http_body: str
+    db_query: str
+    db_mode: Literal["read", "write"]
 
 
 BUILDER_GUIDE = """\
 You set up tools that a phone voice agent for Yellow Metal (a gold loan company in India) uses
 during calls. Turn the admin's description into one tool.
 - type "google_sheets" to add a row to a sheet (append_row) or read one row (find_row);
-  "http" to call a web API (CRM, webhook, Apps Script).
+  "http" to call a web API (CRM, webhook, Apps Script); "database" to run one PostgreSQL
+  query (db_query, with {{placeholders}} where values go, e.g.
+  select interest_due from loans where loan_id = {{loan_id}}; db_mode "read" unless it
+  changes data). Never guess table names you weren't told: use clear placeholder names.
 - params: only what the agent must get from the caller during the call (snake_case, a clear
   description including the format, e.g. "Date the customer will pay, as YYYY-MM-DD").
 - Values may use {{param}} placeholders, the call's customer details (e.g. {{customer_name}},
@@ -367,6 +375,8 @@ async def generate_tool(body: GenerateIn, admin: AdminUser, db: DbSession) -> di
             "match_column": draft.sheet_match_column,
             "match_value": draft.sheet_match_value,
         }
+    elif draft.type == "database":
+        config = {"query": draft.db_query, "mode": draft.db_mode}
     else:
         config = {
             "method": draft.http_method,

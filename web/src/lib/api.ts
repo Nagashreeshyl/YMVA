@@ -254,14 +254,19 @@ export interface HttpToolConfig {
   body: string;
 }
 
-export type ToolType = "google_sheets" | "http";
+export interface DatabaseToolConfig {
+  query: string;
+  mode: "read" | "write";
+}
+
+export type ToolType = "google_sheets" | "http" | "database";
 
 export interface ToolDef {
   id: string;
   name: string;
   description: string;
   type: ToolType;
-  config: SheetsToolConfig | HttpToolConfig;
+  config: SheetsToolConfig | HttpToolConfig | DatabaseToolConfig;
   params: ToolParam[];
   has_secrets: boolean;
   /** The service account's email (share the sheet with it) or the secret header names. */

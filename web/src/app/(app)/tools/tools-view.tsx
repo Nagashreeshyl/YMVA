@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Database,
   FileSpreadsheet,
   Globe,
   Plus,
@@ -30,6 +31,7 @@ import {
   api,
   type AgentDetail,
   type AgentSummary,
+  type DatabaseToolConfig,
   type HttpToolConfig,
   type SheetsToolConfig,
   type ToolDef,
@@ -60,9 +62,17 @@ const NEW_HTTP: HttpToolConfig = {
   body: "",
 };
 
+const NEW_DB: DatabaseToolConfig = { query: "", mode: "read" };
+const NEW_CONFIG: Record<ToolType, Draft["config"]> = {
+  google_sheets: NEW_SHEET,
+  http: NEW_HTTP,
+  database: NEW_DB,
+};
+
 const TYPE_LABEL: Record<ToolType, string> = {
   google_sheets: "Google Sheets",
   http: "HTTP request",
+  database: "Database",
 };
 
 function blankDraft(): Draft {
@@ -126,6 +136,7 @@ function ToolForm({
   const agentDetails = agent.data ? detectVariables(agent.data.config) : [];
   // Only sent when typed: stored secrets are never shown again.
   const [keyJson, setKeyJson] = useState("");
+  const [connection, setConnection] = useState("");
   const [secretHeaders, setSecretHeaders] = useState<
     { name: string; value: string }[]
   >([]);
@@ -135,7 +146,10 @@ function ToolForm({
     setDraft((d) => ({ ...d, ...change }));
   const sheet = draft.config as SheetsToolConfig;
   const http = draft.config as HttpToolConfig;
-  const setConfig = (change: Partial<SheetsToolConfig & HttpToolConfig>) =>
+  const db = draft.config as DatabaseToolConfig;
+  const setConfig = (
+    change: Partial<SheetsToolConfig & HttpToolConfig & DatabaseToolConfig>,
+  ) =>
     setDraft((d) => ({
       ...d,
       config: { ...d.config, ...change } as Draft["config"],
@@ -153,6 +167,9 @@ function ToolForm({
   const secrets = (): Record<string, unknown> | undefined => {
     if (draft.type === "google_sheets" && keyJson.trim()) {
       return { service_account: JSON.parse(keyJson) };
+    }
+    if (draft.type === "database" && connection.trim()) {
+      return { connection: connection.trim() };
     }
     if (draft.type === "http" && secretHeaders.some((h) => h.name.trim())) {
       return {
@@ -186,6 +203,7 @@ function ToolForm({
     onSuccess: (result) => {
       setSaved(result);
       setKeyJson("");
+      setConnection("");
       setSecretHeaders([]);
       queryClient.invalidateQueries({ queryKey: ["tools"] });
     },
@@ -306,12 +324,13 @@ function ToolForm({
                 onChange={(type) =>
                   set({
                     type,
-                    config: type === "google_sheets" ? NEW_SHEET : NEW_HTTP,
+                    config: NEW_CONFIG[type],
                   })
                 }
                 options={[
                   { value: "google_sheets", label: "Google Sheets" },
                   { value: "http", label: "HTTP request" },
+                  { value: "database", label: "Database" },
                 ]}
               />
             </div>
@@ -577,6 +596,71 @@ function ToolForm({
                   }
                   value={keyJson}
                   onChange={(e) => setKeyJson(e.target.value)}
+                />
+              )}
+            </Field>
+          </div>
+        </Panel>
+      ) : draft.type === "database" ? (
+        <Panel title="Database (PostgreSQL)">
+          <div className="flex flex-col gap-4">
+            <Field
+              label="SQL query"
+              hint="Put {{name}} where a value goes, e.g. … where loan_id = {{loan_id}}. Values are passed safely as query parameters, never pasted into the SQL."
+            >
+              {(p) => (
+                <Textarea
+                  {...p}
+                  rows={4}
+                  className="min-h-0 font-mono text-[12px]"
+                  spellCheck={false}
+                  placeholder="select interest_due, due_date from loans where loan_id = {{loan_id}}"
+                  value={db.query}
+                  onChange={(e) => setConfig({ query: e.target.value })}
+                />
+              )}
+            </Field>
+            <Field
+              label="Access"
+              hint="Read-only tools can't change any data, even by mistake. Shows up to 20 rows."
+            >
+              {(p) => (
+                <Select
+                  {...p}
+                  value={db.mode}
+                  onChange={(e) =>
+                    setConfig({
+                      mode: e.target.value as DatabaseToolConfig["mode"],
+                    })
+                  }
+                >
+                  <option value="read">Read only (look things up)</option>
+                  <option value="write">
+                    Can change data (insert or update)
+                  </option>
+                </Select>
+              )}
+            </Field>
+            <Field
+              label={
+                saved?.has_secrets
+                  ? `Database connection · saved (${saved.secret_hint})`
+                  : "Database connection"
+              }
+              hint="postgresql://user:password@host:5432/database. Stored encrypted and never shown again. Use a database user with only the access this tool needs."
+            >
+              {(p) => (
+                <Input
+                  {...p}
+                  type="password"
+                  autoComplete="off"
+                  placeholder={
+                    saved?.has_secrets
+                      ? "Stored. Type to replace."
+                      : "postgresql://…"
+                  }
+                  value={connection}
+                  onChange={(e) => setConnection(e.target.value)}
                 />
               )}
             </Field>
@@ -855,6 +939,8 @@ export function ToolsView() {
               >
                 {t.type === "google_sheets" ? (
                   <FileSpreadsheet className="size-5 text-muted" aria-hidden />
+                ) : t.type === "database" ? (
+                  <Database className="size-5 text-muted" aria-hidden />
                 ) : (
                   <Globe className="size-5 text-muted" aria-hidden />
                 )}

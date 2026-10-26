@@ -12,9 +12,10 @@ import json
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 from pipecat.adapters.schemas.function_schema import FunctionSchema
@@ -76,9 +77,16 @@ class HttpConfig(BaseModel):
     body: str = Field(default="", max_length=10000)
 
 
+class DatabaseConfig(BaseModel):
+    # SQL with {{placeholders}}; they're sent as query parameters, never pasted into the SQL.
+    query: str = Field(min_length=6, max_length=5000)
+    mode: Literal["read", "write"] = "read"
+
+
 CONFIG_TYPES: dict[str, type[BaseModel]] = {
     "google_sheets": SheetsConfig,
     "http": HttpConfig,
+    "database": DatabaseConfig,
 }
 
 
@@ -101,9 +109,14 @@ class HttpSecrets(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)  # e.g. Authorization
 
 
+class DatabaseSecrets(BaseModel):
+    connection: str = Field(pattern=r"^postgres(ql)?://", max_length=1000)
+
+
 SECRET_TYPES: dict[str, type[BaseModel]] = {
     "google_sheets": SheetsSecrets,
     "http": HttpSecrets,
+    "database": DatabaseSecrets,
 }
 
 
@@ -114,6 +127,9 @@ def secret_hint(tool_type: str, secrets: dict[str, Any] | None) -> str | None:
         return None
     if tool_type == "google_sheets":
         return str(secrets.get("service_account", {}).get("client_email", "")) or None
+    if tool_type == "database":
+        url = urlsplit(str(secrets.get("connection", "")))
+        return f"{url.hostname}{url.path}" if url.hostname else None
     names = list(secrets.get("headers", {}))
     return ", ".join(names) or None
 
@@ -246,6 +262,75 @@ async def _run_http(
     return {"ok": True, "response": data}
 
 
+# ---- PostgreSQL ---------------------------------------------------------------------------
+
+MAX_ROWS = 20
+
+
+def _bind(query: str) -> tuple[str, list[str]]:
+    """{{name}} -> $1, $2, ... so values are passed as parameters."""
+    names: list[str] = []
+
+    def number(m: re.Match[str]) -> str:
+        if m.group(1) not in names:
+            names.append(m.group(1))
+        return f"${names.index(m.group(1)) + 1}"
+
+    return VARIABLE_RE.sub(number, query), names
+
+
+def _typed(value: str, pg_type: str) -> Any:
+    """The caller's words arrive as text; give Postgres the type the column expects."""
+    if value == "":
+        return None
+    if pg_type in ("int2", "int4", "int8"):
+        return int(value.replace(",", ""))
+    if pg_type in ("numeric", "float4", "float8"):
+        return Decimal(value.replace(",", ""))
+    if pg_type == "bool":
+        return value.strip().lower() in ("true", "yes", "1")
+    if pg_type == "date":
+        return date.fromisoformat(value)
+    if pg_type in ("timestamp", "timestamptz"):
+        return datetime.fromisoformat(value)
+    return value
+
+
+async def _run_database(
+    config: DatabaseConfig, secrets: dict[str, Any], values: dict[str, str]
+) -> dict[str, Any]:
+    import asyncpg  # type: ignore[import-untyped]
+
+    url = DatabaseSecrets.model_validate(secrets).connection
+    sql, names = _bind(config.query)
+    try:
+        conn = await asyncpg.connect(
+            url,
+            timeout=5,
+            server_settings={"statement_timeout": "8000", "application_name": "ymva-tool"},
+        )
+    except (OSError, asyncpg.PostgresError) as exc:
+        raise ToolError(f"Couldn't connect to the database: {exc.__class__.__name__}") from exc
+    try:
+        # Read tools run read-only, so even a mistaken query can't change data.
+        async with conn.transaction(readonly=config.mode == "read"):
+            statement = await conn.prepare(sql)
+            types = [t.name for t in statement.get_parameters()]
+            try:
+                args = [_typed(values.get(n, ""), t) for n, t in zip(names, types, strict=True)]
+            except ValueError as exc:
+                raise ToolError(f"A value doesn't fit its column: {exc}") from exc
+            rows = await statement.fetch(*args)
+            if config.mode == "write":
+                return {"ok": True, "result": statement.get_statusmsg(), "rows": len(rows)}
+    except asyncpg.PostgresError as exc:
+        raise ToolError(f"The database refused the query: {exc}") from exc
+    finally:
+        await conn.close()
+    found = [dict(r) for r in rows[:MAX_ROWS]]
+    return {"ok": True, "rows": json.loads(json.dumps(found, default=str)), "count": len(rows)}
+
+
 # ---- running ------------------------------------------------------------------------------
 
 
@@ -258,10 +343,13 @@ async def run_tool(
     """Run a tool with the values filled in. Always returns a dict for the model."""
     try:
         parsed = CONFIG_TYPES[tool_type].model_validate(config)
-        runner = _run_sheets if tool_type == "google_sheets" else _run_http
-        result = await asyncio.wait_for(
-            runner(parsed, secrets or {}, values),  # type: ignore[arg-type]
-            TOOL_TIMEOUT_SECS + 2,
+        runners: dict[str, Any] = {
+            "google_sheets": _run_sheets,
+            "http": _run_http,
+            "database": _run_database,
+        }
+        result: dict[str, Any] = await asyncio.wait_for(
+            runners[tool_type](parsed, secrets or {}, values), TOOL_TIMEOUT_SECS + 2
         )
     except ToolError as exc:
         return {"ok": False, "error": str(exc)}
