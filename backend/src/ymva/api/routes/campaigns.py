@@ -39,7 +39,7 @@ class CampaignIn(BaseModel):
     agent_id: uuid.UUID
     phone_number_ids: list[uuid.UUID] = Field(min_length=1, max_length=20)
     days: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4, 5], min_length=1)
-    start_time: str = Field(default="09:30", pattern=TIME_RE)
+    start_time: str = Field(default="08:00", pattern=TIME_RE)
     end_time: str = Field(default="19:00", pattern=TIME_RE)
     max_concurrent: int = Field(default=3, ge=1, le=50)
     max_attempts: int = Field(default=3, ge=1, le=10)

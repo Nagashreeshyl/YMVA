@@ -1,7 +1,14 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, CircleDashed, ExternalLink, Plus, XCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  CircleDashed,
+  ExternalLink,
+  Plus,
+  XCircle,
+} from "lucide-react";
 import { useState } from "react";
 import {
   Badge,
@@ -13,14 +20,28 @@ import {
   Panel,
   Select,
   Skeleton,
+  Textarea,
 } from "@/components/ui";
 import { CopyField } from "@/components/copy";
 import { useConfirm } from "@/components/dialog";
-import { api, type AIProviderStatus, type Integrations, type TelephonyAccount } from "@/lib/api";
+import {
+  api,
+  type AIProviderStatus,
+  type Integrations,
+  type TelephonyAccount,
+  type TelephonyProviderInfo,
+} from "@/lib/api";
 import { relativeTime } from "@/lib/format";
 import { useMe } from "@/lib/session";
 
-const PROVIDER_LABEL: Record<string, string> = { plivo: "Plivo", vobiz: "Vobiz" };
+const PROVIDER_LABEL: Record<string, string> = {
+  plivo: "Plivo",
+  vobiz: "Vobiz",
+  exotel: "Exotel",
+  twilio: "Twilio",
+  telnyx: "Telnyx",
+  vonage: "Vonage",
+};
 
 function ConnectionBadge({
   verifiedAt,
@@ -45,21 +66,32 @@ function ConnectionBadge({
     );
   return (
     <Badge tone="danger">
-      <XCircle className="size-3.5" aria-hidden /> {error ? "Check failed" : "Not verified"}
+      <XCircle className="size-3.5" aria-hidden />{" "}
+      {error ? "Check failed" : "Not verified"}
     </Badge>
   );
 }
 
-function AIKeyCard({ item, canEdit }: { item: AIProviderStatus; canEdit: boolean }) {
+function AIKeyCard({
+  item,
+  canEdit,
+}: {
+  item: AIProviderStatus;
+  canEdit: boolean;
+}) {
   const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(!item.configured);
   const [key, setKey] = useState("");
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ["integrations"] });
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: ["integrations"] });
 
   const save = useMutation({
     mutationFn: () =>
-      api<AIProviderStatus>(`/integrations/ai/${item.provider}`, { method: "PUT", json: { api_key: key } }),
+      api<AIProviderStatus>(`/integrations/ai/${item.provider}`, {
+        method: "PUT",
+        json: { api_key: key },
+      }),
     onSuccess: (result) => {
       refresh();
       setKey("");
@@ -67,11 +99,13 @@ function AIKeyCard({ item, canEdit }: { item: AIProviderStatus; canEdit: boolean
     },
   });
   const test = useMutation({
-    mutationFn: () => api(`/integrations/ai/${item.provider}/test`, { method: "POST" }),
+    mutationFn: () =>
+      api(`/integrations/ai/${item.provider}/test`, { method: "POST" }),
     onSuccess: refresh,
   });
   const remove = useMutation({
-    mutationFn: () => api(`/integrations/ai/${item.provider}`, { method: "DELETE" }),
+    mutationFn: () =>
+      api(`/integrations/ai/${item.provider}`, { method: "DELETE" }),
     onSuccess: () => {
       refresh();
       setEditing(true);
@@ -85,17 +119,25 @@ function AIKeyCard({ item, canEdit }: { item: AIProviderStatus; canEdit: boolean
           <h3 className="font-semibold">{item.label}</h3>
           <p className="text-[13px] text-muted">{item.purpose}</p>
         </div>
-        <ConnectionBadge verifiedAt={item.verified_at} error={item.last_error} configured={item.configured} />
+        <ConnectionBadge
+          verifiedAt={item.verified_at}
+          error={item.last_error}
+          configured={item.configured}
+        />
       </div>
 
       {item.configured && !editing && (
         <p className="text-[13px] text-muted">
           Key ending <span className="font-mono text-ink">{item.key_hint}</span>
-          {item.verified_at && <> · checked {relativeTime(item.verified_at).toLowerCase()}</>}
+          {item.verified_at && (
+            <> · checked {relativeTime(item.verified_at).toLowerCase()}</>
+          )}
         </p>
       )}
       {item.last_error && (
-        <p className="rounded-lg bg-danger-soft px-3 py-2 text-[13px] text-danger">{item.last_error}</p>
+        <p className="rounded-lg bg-danger-soft px-3 py-2 text-[13px] text-danger">
+          {item.last_error}
+        </p>
       )}
 
       {canEdit && editing && (
@@ -106,7 +148,10 @@ function AIKeyCard({ item, canEdit }: { item: AIProviderStatus; canEdit: boolean
             save.mutate();
           }}
         >
-          <Field label="API key" hint="Stored encrypted. It's never shown again after saving.">
+          <Field
+            label="API key"
+            hint="Stored encrypted. It's never shown again after saving."
+          >
             {(p) => (
               <Input
                 {...p}
@@ -122,11 +167,21 @@ function AIKeyCard({ item, canEdit }: { item: AIProviderStatus; canEdit: boolean
           </Field>
           {save.isError && <ErrorNotice error={save.error} />}
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="submit" size="sm" loading={save.isPending} disabled={key.trim().length < 8}>
+            <Button
+              type="submit"
+              size="sm"
+              loading={save.isPending}
+              disabled={key.trim().length < 8}
+            >
               Save and test
             </Button>
             {item.configured && (
-              <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setEditing(false)}
+              >
                 Cancel
               </Button>
             )}
@@ -144,10 +199,19 @@ function AIKeyCard({ item, canEdit }: { item: AIProviderStatus; canEdit: boolean
 
       {canEdit && item.configured && !editing && (
         <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" size="sm" loading={test.isPending} onClick={() => test.mutate()}>
+          <Button
+            variant="secondary"
+            size="sm"
+            loading={test.isPending}
+            onClick={() => test.mutate()}
+          >
             Test connection
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setEditing(true)}
+          >
             Replace key
           </Button>
           <Button
@@ -172,17 +236,28 @@ function AIKeyCard({ item, canEdit }: { item: AIProviderStatus; canEdit: boolean
   );
 }
 
-function AccountRow({ account, canEdit }: { account: TelephonyAccount; canEdit: boolean }) {
+function AccountRow({
+  account,
+  canEdit,
+  setup,
+}: {
+  account: TelephonyAccount;
+  canEdit: boolean;
+  setup: string;
+}) {
   const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ["integrations"] });
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: ["integrations"] });
   const test = useMutation({
-    mutationFn: () => api(`/integrations/telephony/${account.id}/test`, { method: "POST" }),
+    mutationFn: () =>
+      api(`/integrations/telephony/${account.id}/test`, { method: "POST" }),
     onSuccess: refresh,
   });
   const remove = useMutation({
-    mutationFn: () => api(`/integrations/telephony/${account.id}`, { method: "DELETE" }),
+    mutationFn: () =>
+      api(`/integrations/telephony/${account.id}`, { method: "DELETE" }),
     onSuccess: refresh,
   });
 
@@ -197,18 +272,31 @@ function AccountRow({ account, canEdit }: { account: TelephonyAccount; canEdit: 
             </span>
           </p>
           <p className="text-[13px] text-muted">
-            Auth ID {account.credential_hint} · {account.numbers}{" "}
-            {account.numbers === 1 ? "number" : "numbers"} · up to {account.max_concurrent_calls} calls at
-            once
+            {account.credential_hint} · {account.numbers}{" "}
+            {account.numbers === 1 ? "number" : "numbers"} · up to{" "}
+            {account.max_concurrent_calls} calls at once
           </p>
         </div>
-        <ConnectionBadge verifiedAt={account.verified_at} error={account.last_error} />
-        <Button variant="secondary" size="sm" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          {open ? "Hide setup" : "Inbound setup"}
+        <ConnectionBadge
+          verifiedAt={account.verified_at}
+          error={account.last_error}
+        />
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+        >
+          {open ? "Hide setup" : "Setup"}
         </Button>
         {canEdit && (
           <>
-            <Button variant="secondary" size="sm" loading={test.isPending} onClick={() => test.mutate()}>
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={test.isPending}
+              onClick={() => test.mutate()}
+            >
               Test
             </Button>
             <Button
@@ -231,16 +319,14 @@ function AccountRow({ account, canEdit }: { account: TelephonyAccount; canEdit: 
         )}
       </div>
       {account.last_error && (
-        <p className="rounded-lg bg-danger-soft px-3 py-2 text-[13px] text-danger">{account.last_error}</p>
+        <p className="rounded-lg bg-danger-soft px-3 py-2 text-[13px] text-danger">
+          {account.last_error}
+        </p>
       )}
       {remove.isError && <ErrorNotice error={remove.error} />}
       {open && (
         <div className="flex flex-col gap-3 rounded-xl bg-rail p-4">
-          <p className="text-[13px] text-muted">
-            To answer incoming calls, create an application in your {PROVIDER_LABEL[account.provider]}{" "}
-            console, paste these URLs (method POST), and link your numbers to it. Outbound calls need no
-            setup.
-          </p>
+          <p className="text-[13px] text-muted">{setup}</p>
           <CopyField label="Answer URL" value={account.answer_url} />
           <CopyField label="Hangup / status URL" value={account.status_url} />
         </div>
@@ -249,11 +335,22 @@ function AccountRow({ account, canEdit }: { account: TelephonyAccount; canEdit: 
   );
 }
 
-function ConnectAccountForm({ providers, onDone }: { providers: string[]; onDone: () => void }) {
+function ConnectAccountForm({
+  providers,
+  onDone,
+}: {
+  providers: TelephonyProviderInfo[];
+  onDone: () => void;
+}) {
   const queryClient = useQueryClient();
+  const [providerId, setProviderId] = useState(providers[0]?.id ?? "");
+  const provider = providers.find((p) => p.id === providerId) ?? providers[0];
   const add = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
-      api<TelephonyAccount>("/integrations/telephony", { method: "POST", json: body }),
+      api<TelephonyAccount>("/integrations/telephony", {
+        method: "POST",
+        json: body,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["integrations"] });
       onDone();
@@ -266,38 +363,93 @@ function ConnectAccountForm({ providers, onDone }: { providers: string[]; onDone
         e.preventDefault();
         const f = new FormData(e.currentTarget);
         add.mutate({
-          provider: f.get("provider"),
+          provider: providerId,
           name: f.get("name"),
-          auth_id: f.get("auth_id"),
-          auth_token: f.get("auth_token"),
+          credentials: Object.fromEntries(
+            provider.fields.map((field) => [field.key, f.get(field.key)]),
+          ),
           max_concurrent_calls: Number(f.get("max_concurrent_calls") || 10),
         });
       }}
     >
-      <h3 className="font-semibold sm:col-span-2">Connect a telephony account</h3>
+      <h3 className="font-semibold sm:col-span-2">
+        Connect a telephony account
+      </h3>
       <Field label="Provider">
         {(p) => (
-          <Select {...p} name="provider" defaultValue={providers[0]}>
-            {providers.map((id) => (
-              <option key={id} value={id}>
-                {PROVIDER_LABEL[id] ?? id}
+          <Select
+            {...p}
+            value={providerId}
+            onChange={(e) => setProviderId(e.target.value)}
+          >
+            {providers.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.name}
               </option>
             ))}
           </Select>
         )}
       </Field>
-      <Field label="Name" hint="For your reference, e.g. “Plivo – main”">
+      <Field
+        label="Name"
+        hint={`For your reference, e.g. “${provider.name} – main”`}
+      >
         {(p) => <Input {...p} name="name" required />}
       </Field>
-      <Field label="Auth ID">{(p) => <Input {...p} name="auth_id" required autoComplete="off" />}</Field>
-      <Field label="Auth Token" hint="Stored encrypted; never shown again.">
-        {(p) => <Input {...p} name="auth_token" type="password" required autoComplete="off" />}
-      </Field>
-      <Field label="Max simultaneous calls" hint="Match the limit on your provider plan.">
+      {provider.fields.map((field) => (
+        <div
+          key={`${provider.id}-${field.key}`}
+          className={field.multiline ? "sm:col-span-2" : undefined}
+        >
+          <Field
+            label={field.label}
+            hint={[
+              field.hint,
+              field.secret ? "Stored encrypted; never shown again." : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
+            {(p) =>
+              field.multiline ? (
+                <Textarea
+                  {...p}
+                  name={field.key}
+                  required
+                  rows={4}
+                  spellCheck={false}
+                  autoComplete="off"
+                  className="font-mono text-[12px]"
+                />
+              ) : (
+                <Input
+                  {...p}
+                  name={field.key}
+                  required
+                  autoComplete="off"
+                  type={field.secret ? "password" : "text"}
+                />
+              )
+            }
+          </Field>
+        </div>
+      ))}
+      <Field
+        label="Max simultaneous calls"
+        hint="Match the limit on your provider plan."
+      >
         {(p) => (
-          <Input {...p} name="max_concurrent_calls" type="number" min={1} max={500} defaultValue={10} />
+          <Input
+            {...p}
+            name="max_concurrent_calls"
+            type="number"
+            min={1}
+            max={500}
+            defaultValue={10}
+          />
         )}
       </Field>
+      <p className="text-2xs text-muted sm:col-span-2">{provider.setup}</p>
       {add.isError && (
         <div className="sm:col-span-2">
           <ErrorNotice error={add.error} />
@@ -319,7 +471,10 @@ export default function IntegrationsPage() {
   const { data: me } = useMe();
   const canEdit = me?.role === "admin";
   const [connecting, setConnecting] = useState(false);
-  const data = useQuery({ queryKey: ["integrations"], queryFn: () => api<Integrations>("/integrations") });
+  const data = useQuery({
+    queryKey: ["integrations"],
+    queryFn: () => api<Integrations>("/integrations"),
+  });
 
   return (
     <>
@@ -361,13 +516,22 @@ export default function IntegrationsPage() {
             <div className="flex flex-col gap-4">
               {!data.data.public_url_is_https && (
                 <div className="flex gap-3 rounded-xl bg-warning-soft px-4 py-3 text-[13px] text-warning">
-                  <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                  <AlertTriangle
+                    className="mt-0.5 size-4 shrink-0"
+                    aria-hidden
+                  />
                   <p>
                     Phone providers can&apos;t reach{" "}
-                    <span className="font-mono">{data.data.public_base_url}</span>. Real calls need a public
-                    HTTPS address: run <span className="font-mono">./ymva start --domain your.domain</span> on
-                    a server, or <span className="font-mono">./ymva start --tunnel</span> to test from this
-                    computer. Browser test calls work without it.
+                    <span className="font-mono">
+                      {data.data.public_base_url}
+                    </span>
+                    . Real calls need a public HTTPS address: run{" "}
+                    <span className="font-mono">
+                      ./ymva start --domain your.domain
+                    </span>{" "}
+                    on a server, or{" "}
+                    <span className="font-mono">./ymva start --tunnel</span> to
+                    test from this computer. Browser test calls work without it.
                   </p>
                 </div>
               )}
@@ -379,13 +543,23 @@ export default function IntegrationsPage() {
               )}
               {data.data.telephony.length === 0 && !connecting ? (
                 <p className="text-[13px] text-muted">
-                  No accounts connected yet. Plivo and Vobiz are supported now; more providers are coming.
+                  No accounts connected yet. Plivo, Vobiz, Exotel, Twilio,
+                  Telnyx and Vonage are supported.
                 </p>
               ) : (
                 data.data.telephony.length > 0 && (
                   <ul className="divide-y divide-line rounded-xl border border-line">
                     {data.data.telephony.map((a) => (
-                      <AccountRow key={a.id} account={a} canEdit={canEdit} />
+                      <AccountRow
+                        key={a.id}
+                        account={a}
+                        canEdit={canEdit}
+                        setup={
+                          data.data.telephony_providers.find(
+                            (p) => p.id === a.provider,
+                          )?.setup ?? ""
+                        }
+                      />
                     ))}
                   </ul>
                 )

@@ -33,7 +33,7 @@ class Campaign(UUIDPk, Timestamps, Base):
     )
     # Calling hours in the company's time zone: weekdays (0 = Monday) and "HH:MM" times.
     days: Mapped[list[int]] = mapped_column(JSONB, default=lambda: [0, 1, 2, 3, 4, 5])
-    start_time: Mapped[str] = mapped_column(String(5), default="09:30")
+    start_time: Mapped[str] = mapped_column(String(5), default="08:00")
     end_time: Mapped[str] = mapped_column(String(5), default="19:00")
     max_concurrent: Mapped[int] = mapped_column(default=3)
     max_attempts: Mapped[int] = mapped_column(default=3)

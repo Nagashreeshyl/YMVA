@@ -54,8 +54,9 @@ from ymva.voice.guard import LanguageGuard
 from ymva.voice.languages import LANGUAGES
 from ymva.voice.live_state import ConversationState
 from ymva.voice.prompts import GOODBYES, opening_language, opening_lines, system_instruction
-from ymva.voice.recorder import CallRecorder, MetricsObserver
+from ymva.voice.recorder import CallRecorder, ErrorReporter, MetricsObserver
 from ymva.voice.recording import CallRecording
+from ymva.voice.sarvam_voice import SarvamVoice
 from ymva.voice.trim import LeadingSilenceTrimmer
 from ymva.voice.turns import turn_stop_strategy
 
@@ -380,7 +381,7 @@ class CallSession:
             )
 
         llm.strategy.add_event_handler("on_service_switched", on_switched)
-        tts = SarvamTTSService(
+        tts = SarvamVoice(
             api_key=self._key("sarvam"),
             sample_rate=self.setup.output_sample_rate,
             # Stream the model's words to the voice as they arrive instead of waiting for a
@@ -507,7 +508,7 @@ class CallSession:
                 enable_metrics=True,
                 enable_usage_metrics=True,
             ),
-            observers=[self.metrics, self.conversation],
+            observers=[self.metrics, self.conversation, ErrorReporter(self.recorder)],
             idle_timeout_secs=config.limits.silence_timeout_seconds * 3 + 30,
             enable_rtvi=False,
         )

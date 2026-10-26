@@ -17,7 +17,7 @@ import httpx
 
 from ymva.logging import get_logger
 from ymva.voice.config import AgentConfig
-from ymva.voice.languages import LANGUAGES
+from ymva.voice.languages import LANGUAGES, has_indic_letters
 from ymva.voice.prompts import opening_language, opening_lines
 
 log = get_logger(__name__)
@@ -68,7 +68,10 @@ async def synthesize_sarvam(
             headers={"api-subscription-key": api_key},
             json={
                 "text": text,
-                "target_language_code": LANGUAGES[language].pipecat.value,
+                # Sarvam refuses text with no letters of the language (an English greeting).
+                "target_language_code": (
+                    LANGUAGES[language] if has_indic_letters(text) else LANGUAGES["en"]
+                ).pipecat.value,
                 "model": "bulbul:v3",
                 "speaker": voice,
                 "pace": pace,

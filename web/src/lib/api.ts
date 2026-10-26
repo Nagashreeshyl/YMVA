@@ -118,10 +118,19 @@ export interface TelephonyAccount {
   numbers: number;
 }
 
+export interface TelephonyProviderInfo {
+  id: string;
+  name: string;
+  /** The boxes to fill in when connecting an account. */
+  fields: { key: string; label: string; secret: boolean; hint: string; multiline: boolean }[];
+  /** How to point the provider's numbers at YMVA. */
+  setup: string;
+}
+
 export interface Integrations {
   ai: AIProviderStatus[];
   telephony: TelephonyAccount[];
-  telephony_providers: string[];
+  telephony_providers: TelephonyProviderInfo[];
   public_base_url: string;
   public_url_is_https: boolean;
 }
@@ -340,4 +349,55 @@ export interface CallDetail extends CallSummary {
   cost_breakdown: { usage?: Record<string, number> };
   error: string | null;
   events: CallEvent[];
+}
+
+export type CampaignStatus = "draft" | "running" | "paused" | "completed";
+export type ContactStatus = "pending" | "calling" | "retry" | "done" | "failed";
+
+export interface CampaignInput {
+  name: string;
+  agent_id: string;
+  phone_number_ids: string[];
+  /** 0 = Monday … 6 = Sunday */
+  days: number[];
+  start_time: string;
+  end_time: string;
+  max_concurrent: number;
+  max_attempts: number;
+  retry_after_minutes: number;
+}
+
+export interface Campaign extends CampaignInput {
+  id: string;
+  agent_name: string | null;
+  status: CampaignStatus;
+  /** Why dialing is held up right now. */
+  last_error: string | null;
+  counts: Record<ContactStatus | "total", number>;
+  outcomes: Record<string, number>;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface CampaignContact {
+  id: string;
+  phone: string;
+  variables: Record<string, string>;
+  status: ContactStatus;
+  attempts: number;
+  last_result: string | null;
+  next_attempt_at: string | null;
+  call_id: string | null;
+  outcome: string | null;
+  summary: string | null;
+  extracted: Record<string, string>;
+}
+
+export interface ContactImportResult {
+  added: number;
+  duplicates: number;
+  invalid: { row: number; value: string; reason: string }[];
+  invalid_count: number;
+  columns: string[];
 }

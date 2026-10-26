@@ -3,7 +3,7 @@ and supplies the Pipecat serializer for its media WebSocket."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 from xml.sax.saxutils import escape, quoteattr
 
 from pipecat.serializers.base_serializer import FrameSerializer
@@ -11,6 +11,17 @@ from pipecat.serializers.base_serializer import FrameSerializer
 
 class TelephonyError(Exception):
     """A provider rejected a request; the message is safe to show to admins."""
+
+
+@dataclass(frozen=True)
+class CredentialField:
+    """One box on the Integrations form for connecting an account."""
+
+    key: str
+    label: str
+    secret: bool = False
+    hint: str = ""
+    multiline: bool = False
 
 
 @dataclass
@@ -63,19 +74,33 @@ def reject_xml(message: str) -> str:
 
 class TelephonyProviderClient(ABC):
     name: str
+    fields: ClassVar[tuple[CredentialField, ...]]
+    # How to send this provider's calls to YMVA, shown next to the answer/status URLs.
+    setup: ClassVar[str] = ""
 
     def __init__(self, credentials: dict[str, Any]):
         self.credentials = credentials
 
-    @staticmethod
-    @abstractmethod
-    def validate_credentials(credentials: dict[str, Any]) -> dict[str, str]:
+    @classmethod
+    def validate_credentials(cls, credentials: dict[str, Any]) -> dict[str, str]:
         """Return the cleaned credential dict, or raise ValueError."""
+        cleaned = {f.key: str(credentials.get(f.key) or "").strip() for f in cls.fields}
+        missing = [f.label for f in cls.fields if not cleaned[f.key]]
+        if missing:
+            raise ValueError(f"Fill in: {', '.join(missing)}")
+        return cleaned
 
-    @staticmethod
-    def credential_hint(credentials: dict[str, Any]) -> str:
-        auth_id = str(credentials.get("auth_id", ""))
-        return f"{auth_id[:4]}…{auth_id[-4:]}" if len(auth_id) > 8 else auth_id
+    @classmethod
+    def credential_hint(cls, credentials: dict[str, Any]) -> str:
+        first = str(credentials.get(cls.fields[0].key, ""))
+        return f"{first[:4]}…{first[-4:]}" if len(first) > 8 else first
+
+    def answer_response(self, ws_url: str, status_url: str) -> tuple[str, str]:
+        """Body and media type telling the provider to stream the call audio to ws_url."""
+        return stream_xml(ws_url, status_url), "application/xml"
+
+    def reject_response(self, message: str) -> tuple[str, str]:
+        return reject_xml(message), "application/xml"
 
     @abstractmethod
     async def verify(self) -> None:

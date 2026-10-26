@@ -48,10 +48,25 @@ class TelephonyAccountOut(BaseModel):
     numbers: int
 
 
+class CredentialFieldOut(BaseModel):
+    key: str
+    label: str
+    secret: bool
+    hint: str
+    multiline: bool
+
+
+class TelephonyProviderOut(BaseModel):
+    id: TelephonyProvider
+    name: str
+    fields: list[CredentialFieldOut]
+    setup: str
+
+
 class IntegrationsOut(BaseModel):
     ai: list[AIProviderOut]
     telephony: list[TelephonyAccountOut]
-    telephony_providers: list[str]
+    telephony_providers: list[TelephonyProviderOut]
     public_base_url: str
     public_url_is_https: bool
 
@@ -63,17 +78,29 @@ class AIKeyIn(BaseModel):
 class TelephonyAccountIn(BaseModel):
     provider: TelephonyProvider
     name: str = Field(min_length=1, max_length=120)
-    auth_id: str = Field(min_length=1, max_length=120)
-    auth_token: str = Field(min_length=1, max_length=200)
+    # The provider's own fields (see telephony_providers); auth_id/auth_token still accepted.
+    credentials: dict[str, str] = Field(default_factory=dict)
+    auth_id: str | None = Field(default=None, max_length=120)
+    auth_token: str | None = Field(default=None, max_length=200)
     max_concurrent_calls: int = Field(default=10, ge=1, le=500)
+
+    def given(self) -> dict[str, str]:
+        legacy = {"auth_id": self.auth_id, "auth_token": self.auth_token}
+        return {k: v for k, v in legacy.items() if v} | self.credentials
 
 
 class TelephonyAccountPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    auth_id: str | None = Field(default=None, min_length=1, max_length=120)
-    auth_token: str | None = Field(default=None, min_length=1, max_length=200)
+    # Only the fields being changed; empty ones keep their stored value.
+    credentials: dict[str, str] = Field(default_factory=dict)
+    auth_id: str | None = Field(default=None, max_length=120)
+    auth_token: str | None = Field(default=None, max_length=200)
     max_concurrent_calls: int | None = Field(default=None, ge=1, le=500)
     is_active: bool | None = None
+
+    def given(self) -> dict[str, str]:
+        legacy = {"auth_id": self.auth_id, "auth_token": self.auth_token}
+        return {k: v for k, v in (legacy | self.credentials).items() if v}
 
 
 def _ai_out(provider: AIProvider, credential: AICredential | None) -> AIProviderOut:
@@ -122,7 +149,15 @@ async def list_integrations(user: CurrentUser, db: DbSession) -> IntegrationsOut
     return IntegrationsOut(
         ai=[_ai_out(p, credentials.get(p)) for p in AIProvider],
         telephony=[_account_out(a, counts.get(a.id, 0)) for a in accounts],
-        telephony_providers=[p.value for p in SUPPORTED],
+        telephony_providers=[
+            TelephonyProviderOut(
+                id=p,
+                name=PROVIDERS[p].name,
+                fields=[CredentialFieldOut(**vars(f)) for f in PROVIDERS[p].fields],
+                setup=PROVIDERS[p].setup,
+            )
+            for p in SUPPORTED
+        ],
         public_base_url=base,
         public_url_is_https=base.startswith("https://"),
     )
@@ -187,7 +222,7 @@ async def add_account(
             status.HTTP_400_BAD_REQUEST, f"{body.provider.value} isn't supported yet"
         )
     try:
-        credentials = cls.validate_credentials(body.model_dump())
+        credentials = cls.validate_credentials(body.given())
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     account = ProviderAccount(
@@ -241,12 +276,8 @@ async def update_account(
     if body.is_active is not None:
         changes["is_active"] = [account.is_active, body.is_active]
         account.is_active = body.is_active
-    if body.auth_id is not None or body.auth_token is not None:
-        current = decrypt_json(account.encrypted_credentials)
-        merged = {
-            "auth_id": body.auth_id or current.get("auth_id", ""),
-            "auth_token": body.auth_token or current.get("auth_token", ""),
-        }
+    if body.given():
+        merged = decrypt_json(account.encrypted_credentials) | body.given()
         cls = PROVIDERS[account.provider]
         try:
             credentials = cls.validate_credentials(merged)

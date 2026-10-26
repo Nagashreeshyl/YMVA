@@ -74,6 +74,10 @@ def code_from_pipecat(language: Language | str | None) -> str | None:
     return _PIPECAT_TO_CODE.get(value) or _PIPECAT_TO_CODE.get(value.split("-")[0])
 
 
+def has_indic_letters(text: str) -> bool:
+    return any(start <= ord(ch) <= end for ch in text for start, end, _ in _SCRIPT_RANGES)
+
+
 def detect_language(text: str, allowed: list[str] | None = None) -> str | None:
     """Detect the language of a transcript from its script.
 

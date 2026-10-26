@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from starlette.websockets import WebSocketDisconnect
 
 from ymva.api.deps import DbSession
@@ -40,7 +41,7 @@ from ymva.services.integrations import (
     webhook_urls,
     websocket_url,
 )
-from ymva.telephony.base import digits, reject_xml, stream_xml
+from ymva.telephony.base import digits
 from ymva.voice import greeting
 from ymva.voice.runtime import fail_call, load_setup, run_on_websocket
 from ymva.voice.session import PIPELINE_SAMPLE_RATE, MissingCredentialError
@@ -51,8 +52,9 @@ log = get_logger(__name__)
 NOT_CONNECTED = (CallStatus.QUEUED, CallStatus.RINGING)
 
 
-def _xml(body: str) -> Response:
-    return Response(content=body, media_type="application/xml")
+def _reply(body_and_type: tuple[str, str]) -> Response:
+    body, media_type = body_and_type
+    return Response(content=body, media_type=media_type)
 
 
 async def _account(
@@ -83,14 +85,25 @@ async def answer(
     provider: TelephonyProvider, account_id: uuid.UUID, secret: str, request: Request, db: DbSession
 ) -> Response:
     account = await _account(db, provider, account_id, secret)
-    hook = telephony_client(account).parse_webhook(await _form(request))
+    client = telephony_client(account)
+    hook = client.parse_webhook(await _form(request))
     call_param = request.query_params.get("call")
+    known = None
+    if not call_param and hook.provider_call_id:
+        # Providers whose answer URL is fixed (Exotel's flow) identify our call by its ID, and
+        # providers re-send the webhook when a reply is slow: both find the call we already have.
+        known = await db.scalar(
+            select(Call).where(
+                Call.provider_account_id == account.id,
+                Call.provider_call_id == hook.provider_call_id,
+            )
+        )
 
-    if call_param:  # outbound call we placed
-        call = await db.get(Call, uuid.UUID(call_param))
+    if call_param or known:  # a call we placed, or an inbound call already answered once
+        call = known or await db.get(Call, uuid.UUID(str(call_param)))
         if call is None or call.provider_account_id != account.id:
-            return _xml(reject_xml("Sorry, this call could not be connected."))
-    else:  # inbound call to one of our numbers
+            return _reply(client.reject_response("Sorry, this call could not be connected."))
+    else:  # new inbound call to one of our numbers
         to = digits(hook.to_number or "")
         number = await db.scalar(
             select(PhoneNumber)
@@ -104,16 +117,20 @@ async def answer(
         )
         if number is None or agent is None:
             log.warning("inbound call to a number without an agent", to=hook.to_number)
-            return _xml(
-                reject_xml("Sorry, this number is not available right now. Please call later.")
+            return _reply(
+                client.reject_response(
+                    "Sorry, this number is not available right now. Please call later."
+                )
             )
         try:
             version, inbound_config = await runnable_version(db, agent)
             await check_capacity(db)
         except CallSetupError as exc:
             log.warning("inbound call rejected", reason=str(exc))
-            return _xml(
-                reject_xml("Sorry, all our lines are busy. Please call again in a little while.")
+            return _reply(
+                client.reject_response(
+                    "Sorry, all our lines are busy. Please call again in a little while."
+                )
             )
         call = Call(
             agent_id=agent.id,
@@ -135,11 +152,23 @@ async def answer(
     if hook.provider_call_id:
         call.provider_call_id = hook.provider_call_id
     call.answered_at = datetime.now(UTC)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # The same webhook arrived twice at once and the other request saved the call first.
+        await db.rollback()
+        call = await db.scalar(
+            select(Call).where(
+                Call.provider_account_id == account.id,
+                Call.provider_call_id == hook.provider_call_id,
+            )
+        )
+        if call is None:
+            return _reply(client.reject_response("Sorry, this call could not be connected."))
 
     token = await issue_stream_token(call.id)
     status_url = f"{webhook_urls(account)['status_url']}?call={call.id}"
-    return _xml(stream_xml(websocket_url(provider.value, token), status_url))
+    return _reply(client.answer_response(websocket_url(provider.value, token), status_url))
 
 
 @router.api_route("/{provider}/{account_id}/{secret}/status", methods=["GET", "POST"])

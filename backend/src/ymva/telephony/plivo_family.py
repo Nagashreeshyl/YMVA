@@ -8,6 +8,7 @@ from loguru import logger
 from pipecat.serializers.plivo import PlivoFrameSerializer
 
 from ymva.telephony.base import (
+    CredentialField,
     PlacedCall,
     StreamStart,
     TelephonyError,
@@ -43,14 +44,14 @@ def _first(form: dict[str, str], *keys: str) -> str | None:
 
 class _PlivoFamily(TelephonyProviderClient):
     api_base: ClassVar[str]
-
-    @staticmethod
-    def validate_credentials(credentials: dict[str, Any]) -> dict[str, str]:
-        auth_id = str(credentials.get("auth_id", "")).strip()
-        auth_token = str(credentials.get("auth_token", "")).strip()
-        if not auth_id or not auth_token:
-            raise ValueError("Auth ID and Auth Token are both required")
-        return {"auth_id": auth_id, "auth_token": auth_token}
+    fields = (
+        CredentialField("auth_id", "Auth ID"),
+        CredentialField("auth_token", "Auth Token", secret=True),
+    )
+    setup = (
+        "In the application for your number, set the Answer URL to the answer URL below "
+        "(POST) and the Hangup URL to the status URL."
+    )
 
     @property
     def auth_id(self) -> str:

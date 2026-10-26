@@ -368,3 +368,17 @@ async def test_voice_preview_is_cached(
     assert len(calls) == 1 and "Kavya" in calls[0]
     bad = await admin_client.post("/api/agents/voice-preview", json={**body, "voice": "nobody"})
     assert bad.status_code == 422
+
+
+async def test_repeated_inbound_answer_webhook_reuses_the_call(
+    admin_client: httpx.AsyncClient,
+) -> None:
+    setup = await _setup(admin_client)
+    url = setup["account"]["answer_url"]
+    form = {"CallUUID": "abc-123", "From": "919845012345", "To": "918012345678"}
+    first = await admin_client.post(url, data=form)
+    again = await admin_client.post(url, data=form)  # provider retry after a slow reply
+    assert first.status_code == again.status_code == 200
+    assert "<Stream" in again.text
+    calls = (await admin_client.get("/api/calls")).json()
+    assert calls["total"] == 1

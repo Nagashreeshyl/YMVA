@@ -10,6 +10,7 @@ from typing import Any
 
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
+    ErrorFrame,
     MetricsFrame,
     VADUserStoppedSpeakingFrame,
 )
@@ -186,3 +187,23 @@ class CallRecorder:
             if recording_key:
                 call.recording_key = recording_key
             await session.commit()
+
+
+class ErrorReporter(BaseObserver):
+    """Writes service errors (Gemini quota, Sarvam limits...) into the call's transcript once
+    each, so a call that went quiet shows why."""
+
+    def __init__(self, recorder: "CallRecorder") -> None:
+        super().__init__()
+        self._recorder = recorder
+        self._seen: set[str] = set()
+
+    async def on_push_frame(self, data: FramePushed) -> None:
+        if not data.first_push or not isinstance(data.frame, ErrorFrame):
+            return
+        message = " ".join(str(data.frame.error).split())
+        key = message[:60]
+        if key in self._seen or len(self._seen) >= 5:
+            return
+        self._seen.add(key)
+        await self._recorder.event(CallEventType.ERROR, message[:300])

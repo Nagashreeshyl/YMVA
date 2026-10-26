@@ -99,7 +99,7 @@ function SetupChecklist({ data }: { data: Overview }) {
     {
       done: data.providers_connected > 0,
       label: "Connect a telephony provider",
-      detail: "Plivo, Vobiz, Exotel, Twilio, Telnyx, Vonage or SIP",
+      detail: "Plivo, Vobiz, Exotel, Twilio, Telnyx or Vonage",
       href: "/integrations",
     },
     {
