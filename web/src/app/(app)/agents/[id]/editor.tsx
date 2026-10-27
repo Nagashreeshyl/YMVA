@@ -288,7 +288,7 @@ export function AgentEditor({
 
       <Panel
         title="Languages"
-        description="The agent opens in the customer's preferred language (or their state's), then follows whatever language they speak."
+        description="The agent opens in the customer's preferred language (or their state's), then follows whatever language they speak, unless you keep it to one below."
       >
         <div className="flex flex-col gap-5">
           <div className="flex flex-wrap gap-2" role="group" aria-label="Languages the agent speaks">
@@ -313,6 +313,16 @@ export function AgentEditor({
               );
             })}
           </div>
+          <Switch
+            label="Follow the caller's language"
+            description={
+              draft.follow_caller_language === false
+                ? "Off: the whole call stays in the opening language, whatever the caller speaks."
+                : "When the caller switches language (say Tamil to Kannada), the agent switches with them. If they ask for a language, it keeps to that one."
+            }
+            checked={draft.follow_caller_language !== false}
+            onChange={(on) => update((d) => void (d.follow_caller_language = on))}
+          />
           <div className="max-w-xs">
             <Field
               label="Default opening language"

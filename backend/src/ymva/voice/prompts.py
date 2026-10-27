@@ -70,11 +70,28 @@ def opening_language(config: AgentConfig, variables: dict[str, str]) -> str:
     return config.default_language
 
 
+def _language_rules(config: AgentConfig, opening: str) -> str:
+    name = LANGUAGES[opening].name
+    if not config.follow_caller_language:
+        return f"""Language:
+- Speak only {name} for the whole call, even if the caller uses another language. If they
+  clearly don't understand {name}, apologise briefly and say a colleague will call them back."""
+    names = ", ".join(LANGUAGES[c].name for c in config.languages)
+    return f"""Languages:
+- You can speak: {names}.
+- Start in {name}. After that, always reply in the language the caller used in their latest
+  message. Listen to every message afresh: Tamil, Kannada, Telugu, Malayalam and Hindi are
+  different languages, so if the caller moves from one to another, switch immediately.
+- Mixing English words into any Indian language is normal and does not mean the caller
+  switched to English. Switch to English only if they speak whole sentences in English.
+- If the caller explicitly asks you to speak a particular language, use that language from
+  then on, even if they mix in others, until they ask for a different one."""
+
+
 def system_instruction(
     config: AgentConfig, variables: dict[str, str], opening: str, timezone: str
 ) -> str:
     now = datetime.now(ZoneInfo(timezone))
-    names = ", ".join(LANGUAGES[c].name for c in config.languages)
     known = "\n".join(f"- {k}: {v}" for k, v in variables.items() if v) or "- (none)"
     return f"""{render(config.system_prompt, variables, missing="[not provided]").strip()}
 
@@ -84,12 +101,7 @@ Call details:
 - What you know about this caller:
 {known}
 
-Languages:
-- You can speak: {names}.
-- Start in {LANGUAGES[opening].name}. After that, always reply in the language the caller used in
-  their latest message. If they switch language, switch immediately with them.
-- Mixing English words into any Indian language is normal and does not mean the caller
-  switched to English. Switch to English only if they speak whole sentences in English.
+{_language_rules(config, opening)}
 
 {EVERYDAY_MIX if config.speaking_style == "everyday_mix" else PURE_LANGUAGE}
 

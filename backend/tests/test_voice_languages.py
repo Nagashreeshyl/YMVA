@@ -217,3 +217,49 @@ def test_everyday_mix_covers_every_language() -> None:
     assert "Kanglish" in system_instruction(config, {}, "kn", "Asia/Kolkata")
     config.speaking_style = "pure"
     assert "Kanglish" not in system_instruction(config, {}, "kn", "Asia/Kolkata")
+
+
+def _session(config: AgentConfig) -> object:
+    import uuid
+
+    from pipecat.processors.frame_processor import FrameProcessor
+
+    from ymva.voice.session import CallSession, CallSetup
+
+    class Transport:
+        def __init__(self) -> None:
+            self._in, self._out = FrameProcessor(), FrameProcessor()
+
+        def input(self) -> FrameProcessor:
+            return self._in
+
+        def output(self) -> FrameProcessor:
+            return self._out
+
+    setup = CallSetup(
+        call_id=uuid.uuid4(), config=config, variables={}, keys={"google": "x", "sarvam": "x"}
+    )
+    return CallSession(setup, Transport())  # type: ignore[arg-type]
+
+
+def test_live_mode_guard_hears_the_caller() -> None:
+    from ymva.voice.gemini_live import ResilientGeminiLive
+
+    config = interest_reminder().model_copy(update={"mode": "gemini_live"})
+    session = _session(config)
+    pipeline, _, _, guard, _ = session._build()  # type: ignore[attr-defined]
+    order = [type(p) for p in pipeline.processors]
+    # Gemini sends the caller's words upstream: the guard must sit before the model.
+    assert order.index(LanguageGuard) < order.index(ResilientGeminiLive)
+    assert guard._allowed == config.languages
+
+
+def test_agent_can_keep_to_one_language() -> None:
+    config = interest_reminder().model_copy(update={"follow_caller_language": False})
+    session = _session(config)
+    _, _, _, guard, _ = session._build()  # type: ignore[attr-defined]
+    assert guard._allowed == [session.opening]  # type: ignore[attr-defined]
+    text = system_instruction(config, {}, "kn", "Asia/Kolkata")
+    assert "Speak only Kannada for the whole call" in text
+    follow = system_instruction(interest_reminder(), {}, "kn", "Asia/Kolkata")
+    assert "explicitly asks you to speak a particular language" in follow

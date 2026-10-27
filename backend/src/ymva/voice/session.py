@@ -67,6 +67,28 @@ log = get_logger(__name__)
 PIPELINE_SAMPLE_RATE = 16000
 GEMINI_OUTPUT_SAMPLE_RATE = 24000
 
+
+def language_schema(languages: list[str]) -> FunctionSchema:
+    """Gemini Live hears the caller directly, so it is the best judge of a language change;
+    calling this makes the switch explicit (recorded, and the reply language is then pinned)."""
+    return FunctionSchema(
+        name="switch_language",
+        description=(
+            "Call this immediately whenever the caller speaks a different language from the "
+            "one you are using, or asks you to use a language. Then reply in that language."
+        ),
+        properties={
+            "language": {
+                "type": "string",
+                "enum": languages,
+                "description": "Language code: "
+                + ", ".join(f"{c} = {LANGUAGES[c].name}" for c in languages),
+            }
+        },
+        required=["language"],
+    )
+
+
 END_CALL = FunctionSchema(
     name="end_call",
     description=(
@@ -217,6 +239,19 @@ class CallSession:
 
     # ---- tools -------------------------------------------------------------------------
 
+    async def _switch_language(self, params: FunctionCallParams) -> None:
+        code = str((params.arguments or {}).get("language", "")).strip().lower()
+        if self._guard is None or code not in self._switchable():
+            await params.result_callback({"ok": False, "error": "That language isn't available"})
+            return
+        await self._guard.switch_to(code, steer=False)
+        info = LANGUAGES[code]
+        await params.result_callback(
+            {"ok": True, "note": f"From now on reply only in {info.name} ({info.native}), "
+             "until the caller changes language again. Answer the caller's last message now, "
+             f"in {info.name}."}
+        )  # fmt: skip
+
     async def _end_call(self, params: FunctionCallParams) -> None:
         reason = str(params.arguments.get("reason") or "agent ended the call")
         await self.recorder.event(
@@ -348,14 +383,21 @@ class CallSession:
 
     # ---- pipeline construction ---------------------------------------------------------
 
+    def _switchable(self) -> list[str]:
+        """Languages the call may switch to: only the opening one when the agent keeps to it."""
+        config = self.setup.config
+        return config.languages if config.follow_caller_language else [self.opening]
+
     def _build(self) -> tuple[Pipeline, LLMContext, int, LanguageGuard, Any]:
         config = self.setup.config
         variables = self.setup.variables
         self.opening = opening_language(config, variables)
         instruction = system_instruction(config, variables, self.opening, get_settings().timezone)
         transfer = [transfer_schema(config.transfer.when)] if self._can_transfer else []
+        switching = config.mode == "gemini_live" and len(self._switchable()) > 1
+        language = [language_schema(config.languages)] if switching else []
         tools = ToolsSchema(
-            standard_tools=[END_CALL, *transfer, *(t.schema() for t in self.setup.tools)]
+            standard_tools=[END_CALL, *transfer, *language, *(t.schema() for t in self.setup.tools)]
         )
 
         async def on_switch(previous: str | None, current: str) -> None:
@@ -409,20 +451,24 @@ class CallSession:
             llm.register_function(
                 "transfer_call", self._transfer_call, cancel_on_interruption=False
             )
+            llm.register_function("switch_language", self._switch_language)
             for tool in self.setup.tools:
                 llm.register_function(tool.name, self._run_tool)
             self._live_llm = llm
             context = LLMContext(messages=[])
             pair = LLMContextAggregatorPair(context, user_params=user_params)
             guard = LanguageGuard(
-                allowed=config.languages, initial=self.opening, on_switch=on_switch, gemini_live=llm
-            )
+                allowed=self._switchable(), initial=self.opening, on_switch=on_switch,
+                gemini_live=llm,
+            )  # fmt: skip
             pipeline = Pipeline(
                 [
                     self.transport.input(),
                     pair.user(),
-                    llm,
+                    # Gemini sends what the caller said back upstream, so the guard must sit
+                    # before the model to see it.
                     guard,
+                    llm,
                     self.transport.output(),
                     self.recording.processor,
                     pair.assistant(),
@@ -495,7 +541,7 @@ class CallSession:
         context = LLMContext(messages=[], tools=tools)
         pair = LLMContextAggregatorPair(context, user_params=user_params)
         guard = LanguageGuard(
-            allowed=config.languages, initial=self.opening, on_switch=on_switch, tts=tts
+            allowed=self._switchable(), initial=self.opening, on_switch=on_switch, tts=tts
         )
         pipeline = Pipeline(
             [

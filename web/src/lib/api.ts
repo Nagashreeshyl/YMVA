@@ -162,6 +162,8 @@ export interface AgentConfig {
   greetings: Record<string, string>;
   default_language: string;
   languages: string[];
+  /** Missing on agents saved before the setting existed: they follow the caller. */
+  follow_caller_language?: boolean;
   state_languages: Record<string, string>;
   announcement: { enabled: boolean; text: string; translations: Record<string, string> };
   /** Hand the call to a person on this number when the caller asks (phone calls only). */

@@ -197,6 +197,8 @@ class AgentConfig(BaseModel):
     greetings: dict[str, str] = Field(default_factory=dict)
     default_language: str = "en"
     languages: list[str] = Field(default_factory=lambda: ["en", "hi", "kn", "te", "ta"])
+    # Off: the whole call stays in the opening language (preferred, else state, else default).
+    follow_caller_language: bool = True
     # Optional per-agent override of state -> greeting language.
     state_languages: dict[str, str] = Field(default_factory=dict)
     announcement: Announcement = Field(default_factory=Announcement)

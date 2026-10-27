@@ -15,6 +15,7 @@ from typing import Any
 from loguru import logger
 from pipecat.frames.frames import (
     Frame,
+    InterruptionFrame,
     LLMMessagesAppendFrame,
     TranscriptionFrame,
     TTSUpdateSettingsFrame,
@@ -35,7 +36,8 @@ def language_note(code: str) -> str:
     info = LANGUAGES[code]
     return (
         f"[Language update: the caller is now speaking {info.name}. From now on reply only in "
-        f"{info.name} ({info.native}), until the caller switches language again.]"
+        f"{info.name} ({info.native}), until the caller switches language again. Exception: "
+        "if the caller explicitly asked you to use a particular language, keep using it.]"
     )
 
 
@@ -81,15 +83,27 @@ class LanguageGuard(FrameProcessor):
         if isinstance(frame, TranscriptionFrame) and frame.text.strip():
             code = self._language_of(frame)
             if code and code != self.current:
-                previous, self.current = self.current, code
-                await self._apply_switch(code)
-                await self._on_switch(previous, code)
+                await self.switch_to(code)
         await self.push_frame(frame, direction)
+
+    async def switch_to(self, code: str, *, steer: bool = True) -> None:
+        """Make `code` the call's language. `steer=False` when the model itself asked for it."""
+        if code == self.current or code not in self._allowed:
+            return
+        previous, self.current = self.current, code
+        if steer:
+            await self._apply_switch(code)
+        await self._on_switch(previous, code)
 
     async def _apply_switch(self, code: str) -> None:
         info = LANGUAGES[code]
         if self._gemini_live is not None:
-            await self._steer_gemini_live(language_note(code))
+            # Gemini has usually started answering in the old language by the time its
+            # transcript arrives: stop that reply and have it answer again in the new one.
+            await self.push_frame(InterruptionFrame())
+            await self._steer_gemini_live(
+                language_note(code) + f" Answer the caller's last message again, in {info.name}."
+            )
             return
         await self.push_frame(
             LLMMessagesAppendFrame(
@@ -104,7 +118,7 @@ class LanguageGuard(FrameProcessor):
             )
 
     async def _steer_gemini_live(self, note: str) -> None:
-        # Adds the note to the live session without asking Gemini to respond to it.
+        # Completes the turn with the note, so Gemini replies again following it.
         session = getattr(self._gemini_live, "_session", None)
         if session is None:
             return
@@ -112,7 +126,7 @@ class LanguageGuard(FrameProcessor):
             from google.genai.types import Content, Part
 
             await session.send_client_content(
-                turns=Content(role="user", parts=[Part(text=note)]), turn_complete=False
+                turns=Content(role="user", parts=[Part(text=note)]), turn_complete=True
             )
         except Exception as exc:
             logger.warning(f"Couldn't send language note to Gemini Live: {exc}")

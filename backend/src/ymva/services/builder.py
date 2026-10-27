@@ -69,6 +69,9 @@ class AgentSpec(BaseModel):
     system_prompt: str
     languages: list[str]
     default_language: str
+    follow_caller_language: bool = Field(
+        description="True: switch with the caller's language. False: keep the opening language"
+    )
     greetings: list[GreetingSpec]
     variables: list[VariableSpec]
     announcement_enabled: bool
@@ -152,7 +155,7 @@ okay, sir) in English letters.
 Defaults unless the admin says otherwise: mode pipeline, everyday_mix, languages en, kn, te, hi,
 ta with default en, a female persona named Priya (voice priya / Aoede), announcement off,
 max_duration_seconds 600 (30-3600), silence_timeout_seconds 20 (5-120), office_background
-false, typing_during_tools true.
+false, typing_during_tools true, follow_caller_language true.
 
 Example of a good system_prompt:
 ---
@@ -208,6 +211,7 @@ def to_spec(config: AgentConfig, name: str, description: str) -> AgentSpec:
         system_prompt=config.system_prompt,
         languages=config.languages,
         default_language=config.default_language,
+        follow_caller_language=config.follow_caller_language,
         greetings=[GreetingSpec(language=k, text=v) for k, v in config.greetings.items()],
         variables=[VariableSpec(**v.model_dump()) for v in config.variables],
         announcement_enabled=config.announcement.enabled,
@@ -242,6 +246,7 @@ def from_spec(spec: AgentSpec, base: AgentConfig) -> AgentConfig:
         system_prompt=spec.system_prompt,
         languages=languages,
         default_language=spec.default_language.strip().lower(),
+        follow_caller_language=spec.follow_caller_language,
         greetings={g.language.strip().lower(): g.text.strip() for g in spec.greetings if g.text},
         variables=[
             Variable(
