@@ -135,8 +135,13 @@ async def analyze_call(call_id: uuid.UUID) -> None:
         if data["do_not_call"] and call.direction != CallDirection.WEB and phone:
             await db.execute(
                 insert(DoNotCall)
-                .values(phone=phone, reason="Asked on a call not to be called again")
-                .on_conflict_do_nothing()
+                .values(
+                    phone=phone,
+                    reason="Asked on a call not to be called again",
+                    pending=True,  # an admin approves it in Settings -> Do not call
+                    call_id=call.id,
+                )
+                .on_conflict_do_nothing()  # already listed (approved or waiting)
             )
         await db.commit()
 

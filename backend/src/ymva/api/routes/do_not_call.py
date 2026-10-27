@@ -1,10 +1,11 @@
 """Do-not-call list: numbers that campaigns and "Call a phone" must never dial."""
 
+import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Path, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from ymva.api.deps import AdminUser, CurrentUser, DbSession, client_ip
@@ -18,6 +19,8 @@ router = APIRouter(prefix="/do-not-call", tags=["do-not-call"])
 class DoNotCallOut(BaseModel):
     phone: str
     reason: str
+    pending: bool
+    call_id: uuid.UUID | None
     created_at: datetime
 
 
@@ -30,7 +33,16 @@ class DoNotCallIn(BaseModel):
 @router.get("")
 async def list_numbers(_: CurrentUser, db: DbSession) -> list[DoNotCallOut]:
     rows = await db.scalars(select(DoNotCall).order_by(DoNotCall.created_at.desc()))
-    return [DoNotCallOut(phone=r.phone, reason=r.reason, created_at=r.created_at) for r in rows]
+    return [
+        DoNotCallOut(
+            phone=r.phone,
+            reason=r.reason,
+            pending=r.pending,
+            call_id=r.call_id,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
 
 
 @router.post("")
@@ -54,7 +66,7 @@ async def add_numbers(
         await db.execute(
             insert(DoNotCall)
             .values([{"phone": p, "reason": body.reason.strip()} for p in phones])
-            .on_conflict_do_nothing()
+            .on_conflict_do_update(index_elements=["phone"], set_={"pending": False})
         )
     await audit.record(
         db,
@@ -67,6 +79,31 @@ async def add_numbers(
     )
     await db.commit()
     return {"added": len(phones)}
+
+
+@router.post("/{phone}/approve")
+async def approve_number(
+    request: Request,
+    admin: AdminUser,
+    db: DbSession,
+    phone: str = Path(pattern=r"^\+\d{6,15}$"),
+) -> dict[str, bool]:
+    result = await db.execute(
+        update(DoNotCall).where(DoNotCall.phone == phone, DoNotCall.pending).values(pending=False)
+    )
+    if not result.rowcount:  # type: ignore[attr-defined]
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not waiting for approval")
+    await audit.record(
+        db,
+        actor=admin,
+        action="do_not_call.approve",
+        entity_type="do_not_call",
+        entity_id=None,
+        summary=f"Approved {phone} for the do-not-call list",
+        ip_address=client_ip(request),
+    )
+    await db.commit()
+    return {"ok": True}
 
 
 @router.delete("/{phone}", status_code=status.HTTP_204_NO_CONTENT)

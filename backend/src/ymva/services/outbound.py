@@ -36,7 +36,7 @@ async def start_outbound_call(
     refuses; in that case the call is saved as failed. The caller commits."""
     if await is_draining():
         raise CallSetupError("YMVA is restarting for an update. Try again in a few minutes.")
-    if await db.get(DoNotCall, to):
+    if (entry := await db.get(DoNotCall, to)) and not entry.pending:
         raise DoNotCallError("This number is on the do-not-call list")
     account = await db.get(ProviderAccount, number.provider_account_id)
     if account is None or not account.is_active or not number.is_active:

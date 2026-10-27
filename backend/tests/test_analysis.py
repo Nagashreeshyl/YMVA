@@ -4,6 +4,7 @@ from typing import Any
 import httpx
 import pytest
 
+from tests.test_calls_api import _no_network, _setup  # noqa: F401  (fixture used below)
 from ymva.db import get_sessionmaker
 from ymva.models import Call, CallDirection, CallEvent, CallEventType, CallStatus
 from ymva.services import analysis
@@ -143,7 +144,7 @@ async def test_results_are_sent_to_after_call_tools(
     assert sent[0]["paid_on"] == ""  # tracked details not given are still there, empty
 
 
-async def test_caller_who_asks_not_to_be_called_is_added_to_do_not_call(
+async def test_caller_who_asks_not_to_be_called_waits_for_admin_approval(
     admin_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from ymva.models import DoNotCall
@@ -163,4 +164,20 @@ async def test_caller_who_asks_not_to_be_called_is_added_to_do_not_call(
         await db.commit()
     await analysis.analyze_call(call_id)
     async with get_sessionmaker()() as db:
-        assert await db.get(DoNotCall, "+919845077777") is not None
+        entry = await db.get(DoNotCall, "+919845077777")
+        assert entry is not None and entry.pending and entry.call_id == call_id
+
+    # Waiting for approval: still callable.
+    setup = await _setup(admin_client)
+    outbound = {
+        "agent_id": setup["agent"]["id"],
+        "from_number_id": setup["number"]["id"],
+        "to": "+919845077777",
+    }
+    assert (await admin_client.post("/api/calls/outbound", json=outbound)).status_code == 201
+    approved = await admin_client.post("/api/do-not-call/+919845077777/approve")
+    assert approved.status_code == 200
+    blocked = await admin_client.post("/api/calls/outbound", json=outbound)
+    assert blocked.status_code == 400 and "do-not-call" in blocked.json()["detail"]
+    again = await admin_client.post("/api/do-not-call/+919845077777/approve")
+    assert again.status_code == 404  # only waiting numbers can be approved

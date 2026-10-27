@@ -1,6 +1,7 @@
+import uuid
 from typing import Any
 
-from sqlalchemy import String
+from sqlalchemy import ForeignKey, String, false
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,3 +24,6 @@ class DoNotCall(Timestamps, Base):
 
     phone: Mapped[str] = mapped_column(String(20), primary_key=True)  # E.164
     reason: Mapped[str] = mapped_column(String(200), default="")
+    # Asked for on a call and waiting for an admin to approve; not blocked until approved.
+    pending: Mapped[bool] = mapped_column(default=False, server_default=false())
+    call_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("calls.id", ondelete="SET NULL"))
