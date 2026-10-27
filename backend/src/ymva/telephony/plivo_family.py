@@ -111,6 +111,17 @@ class _PlivoFamily(TelephonyProviderClient):
         if response.status_code not in (200, 204, 404):
             raise TelephonyError(f"{self.name} couldn't hang up: {self._error_text(response)}")
 
+    async def transfer(
+        self, provider_call_id: str, *, url: str, to_number: str, caller_id: str
+    ) -> None:
+        response = await self._request(
+            "POST",
+            f"{self.account_path}/Call/{provider_call_id}/",
+            json={"legs": "aleg", "aleg_url": url, "aleg_method": "POST"},
+        )
+        if response.status_code >= 300:
+            raise TelephonyError(f"{self.name} couldn't transfer: {self._error_text(response)}")
+
     def parse_webhook(self, form: dict[str, str]) -> WebhookCall:
         raw_status = (_first(form, "CallStatus", "call_status", "Status") or "").lower()
         cause = _first(form, "HangupCause", "HangupCauseName", "hangup_cause")

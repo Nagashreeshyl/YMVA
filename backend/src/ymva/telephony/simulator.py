@@ -25,6 +25,7 @@ from ymva.telephony.twilio_family import TelnyxClient, TwilioClient
 from ymva.telephony.vonage import VonageClient
 
 QUEUE_KEY = "sim:placed"
+TRANSFERS_KEY = "sim:transfers"
 FORMATS: dict[str, type[TelephonyProviderClient]] = {
     "twilio": TwilioClient,
     "telnyx": TelnyxClient,
@@ -79,6 +80,15 @@ class SimulatorClient(TelephonyProviderClient):
 
     async def hang_up(self, provider_call_id: str) -> None:
         return None
+
+    async def transfer(
+        self, provider_call_id: str, *, url: str, to_number: str, caller_id: str
+    ) -> None:
+        payload = {"sid": provider_call_id, "url": url, "to": to_number, "from": caller_id}
+        await get_redis().rpush(TRANSFERS_KEY, json.dumps(payload))
+
+    def transfer_response(self, to_number: str, caller_id: str) -> tuple[str, str]:
+        return self._like.transfer_response(to_number, caller_id)
 
     def answer_response(self, ws_url: str, status_url: str) -> tuple[str, str]:
         return self._like.answer_response(ws_url, status_url)

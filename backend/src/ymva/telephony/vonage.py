@@ -113,6 +113,22 @@ class VonageClient(TelephonyProviderClient):
     async def hang_up(self, provider_call_id: str) -> None:
         await self._request("PUT", f"{API}/{provider_call_id}", json={"action": "hangup"})
 
+    async def transfer(
+        self, provider_call_id: str, *, url: str, to_number: str, caller_id: str
+    ) -> None:
+        ncco = [
+            {
+                "action": "connect",
+                "from": digits(caller_id),
+                "endpoint": [{"type": "phone", "number": digits(to_number)}],
+            }
+        ]
+        await self._request(
+            "PUT",
+            f"{API}/{provider_call_id}",
+            json={"action": "transfer", "destination": {"type": "ncco", "ncco": ncco}},
+        )
+
     def answer_response(self, ws_url: str, status_url: str) -> tuple[str, str]:
         ncco = [
             {

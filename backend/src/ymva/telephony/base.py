@@ -65,6 +65,15 @@ def stream_xml(ws_url: str, status_url: str) -> str:
     )
 
 
+def dial_xml(to_number: str, caller_id: str) -> str:
+    """Plivo-style XML that connects the caller to another phone."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f"<Response><Dial callerId={quoteattr(digits(caller_id))}>"
+        f"<Number>{digits(to_number)}</Number></Dial></Response>"
+    )
+
+
 def reject_xml(message: str) -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -101,6 +110,17 @@ class TelephonyProviderClient(ABC):
 
     def reject_response(self, message: str) -> tuple[str, str]:
         return reject_xml(message), "application/xml"
+
+    def transfer_response(self, to_number: str, caller_id: str) -> tuple[str, str]:
+        """Body served at the transfer URL: connect the caller to to_number."""
+        return dial_xml(to_number, caller_id), "application/xml"
+
+    async def transfer(
+        self, provider_call_id: str, *, url: str, to_number: str, caller_id: str
+    ) -> None:
+        """Move the live call off the AI to a person: the provider fetches `url` (which serves
+        transfer_response) or is given to_number directly. Raise TelephonyError on failure."""
+        raise TelephonyError(f"{self.name} can't transfer a call from the AI agent")
 
     @abstractmethod
     async def verify(self) -> None:

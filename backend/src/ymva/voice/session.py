@@ -3,6 +3,7 @@
 import asyncio
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -81,6 +82,21 @@ END_CALL = FunctionSchema(
 )
 
 
+def transfer_schema(when: str) -> FunctionSchema:
+    return FunctionSchema(
+        name="transfer_call",
+        description=(
+            f"Connect the caller to a human colleague by phone. Use it when: {when}. First "
+            "tell the caller in one short sentence that you are connecting them to a "
+            "colleague, then call this. If it fails, say a colleague will call them back soon."
+        ),
+        properties={
+            "reason": {"type": "string", "description": "Why, briefly, for the colleague."}
+        },
+        required=[],
+    )
+
+
 class MissingCredentialError(Exception):
     pass
 
@@ -99,6 +115,8 @@ class CallSetup:
     provider_call_id: str | None = None
     tools: list[LoadedTool] = field(default_factory=list)
     customer_phone: str | None = None
+    # Phone calls: moves the call to the agent's transfer number (raises TelephonyError).
+    transfer: Callable[[], Awaitable[None]] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -161,6 +179,7 @@ class CallSession:
         self._idle_prompts = 0
         self._live_llm: Any = None
         self._guard: LanguageGuard | None = None
+        self._transferring = False
 
     async def _warm_up_llm(self) -> None:
         """Open the connection to the model while the greeting plays, so the first reply
@@ -204,6 +223,50 @@ class CallSession:
         )
         if self._ending is None or self._ending.done():
             self._ending = asyncio.create_task(self._hang_up_after_goodbye(reason))
+
+    @property
+    def _can_transfer(self) -> bool:
+        t = self.setup.config.transfer
+        return t.enabled and t.number is not None and self.setup.transfer is not None
+
+    async def _transfer_call(self, params: FunctionCallParams) -> None:
+        assert self.task is not None and self.setup.transfer is not None
+        if self._transferring:  # the caller asked again while it was already under way
+            await params.result_callback(
+                {"ok": True}, properties=FunctionCallResultProperties(run_llm=False)
+            )
+            return
+        self._transferring = True
+        phone = self.setup.config.transfer.number
+        await self.recorder.event(
+            CallEventType.TOOL_CALL,
+            "transfer_call",
+            data={"tool": "transfer_call", "arguments": params.arguments, "to": phone},
+        )
+        await asyncio.sleep(1.0)  # the "connecting you" sentence may still be on its way
+        for _ in range(150):  # let the agent finish speaking, up to 15 s
+            if not self.conversation.bot_speaking:
+                break
+            await asyncio.sleep(0.1)
+        try:
+            await self.setup.transfer()
+        except Exception as exc:
+            log.warning("transfer failed", call_id=str(self.setup.call_id), error=str(exc))
+            await self.recorder.event(CallEventType.ERROR, f"Transfer failed: {exc}"[:300])
+            self._transferring = False
+            await params.result_callback(
+                {"ok": False, "error": "The transfer didn't go through. Tell the caller a "
+                 "colleague will call them back soon."}
+            )  # fmt: skip
+            return
+        await self.recorder.event(CallEventType.STATUS, f"Transferred to {phone}")
+        self._ended_by = "transferred"
+        await params.result_callback(
+            {"ok": True}, properties=FunctionCallResultProperties(run_llm=False)
+        )
+        # The provider closes the audio stream once the transfer starts; end ours regardless.
+        await asyncio.sleep(5)
+        await self.task.queue_frame(EndWorkerFrame(reason="transferred"))
 
     async def _watch_for_stalls(self) -> None:
         """Gemini Live: if the caller has finished and nothing happens for a while, recover."""
@@ -267,7 +330,10 @@ class CallSession:
         variables = self.setup.variables
         self.opening = opening_language(config, variables)
         instruction = system_instruction(config, variables, self.opening, get_settings().timezone)
-        tools = ToolsSchema(standard_tools=[END_CALL, *(t.schema() for t in self.setup.tools)])
+        transfer = [transfer_schema(config.transfer.when)] if self._can_transfer else []
+        tools = ToolsSchema(
+            standard_tools=[END_CALL, *transfer, *(t.schema() for t in self.setup.tools)]
+        )
 
         async def on_switch(previous: str | None, current: str) -> None:
             await self.recorder.event(
@@ -316,6 +382,10 @@ class CallSession:
                 inference_on_context_initialization=False,
             )
             llm.register_function("end_call", self._end_call)
+            # The caller often keeps talking ("connect me!") while it starts; finish it anyway.
+            llm.register_function(
+                "transfer_call", self._transfer_call, cancel_on_interruption=False
+            )
             for tool in self.setup.tools:
                 llm.register_function(tool.name, self._run_tool)
             self._live_llm = llm
@@ -368,6 +438,10 @@ class CallSession:
         for service in llms:
             assert isinstance(service, GoogleLLMService)
             service.register_function("end_call", self._end_call)
+            # The caller often keeps talking ("connect me!") while it starts; finish it anyway.
+            service.register_function(
+                "transfer_call", self._transfer_call, cancel_on_interruption=False
+            )
             for tool in self.setup.tools:
                 service.register_function(tool.name, self._run_tool)
         self._warm_llm = llms[0]

@@ -21,6 +21,7 @@ from ymva.db import get_sessionmaker
 from ymva.logging import get_logger
 from ymva.models import (
     Agent,
+    AgentVersion,
     Call,
     CallDirection,
     CallStatus,
@@ -43,6 +44,7 @@ from ymva.services.integrations import (
 )
 from ymva.telephony.base import digits
 from ymva.voice import greeting
+from ymva.voice.config import AgentConfig
 from ymva.voice.runtime import fail_call, load_setup, run_on_websocket
 from ymva.voice.session import PIPELINE_SAMPLE_RATE, MissingCredentialError
 
@@ -209,6 +211,28 @@ async def call_status(
     return {"status": "ok"}
 
 
+def _our_number(call: Call) -> str:
+    return (call.from_number if call.direction == CallDirection.OUTBOUND else call.to_number) or ""
+
+
+@router.api_route("/{provider}/{account_id}/{secret}/transfer", methods=["GET", "POST"])
+async def transfer(
+    provider: TelephonyProvider, account_id: uuid.UUID, secret: str, request: Request, db: DbSession
+) -> Response:
+    """The provider fetches this when the AI hands the call to a person; the number comes
+    from the agent's settings, never from the request."""
+    account = await _account(db, provider, account_id, secret)
+    client = telephony_client(account)
+    call = await db.get(Call, uuid.UUID(request.query_params.get("call", "")))
+    if call is None or call.provider_account_id != account.id:
+        raise HTTPException(404)
+    version = await db.get(AgentVersion, call.agent_version_id)
+    config = AgentConfig.model_validate(call.agent_config or (version.config if version else {}))
+    if not (config.transfer.enabled and config.transfer.number):
+        return _reply(client.reject_response("Sorry, no one is available right now. Goodbye."))
+    return _reply(client.transfer_response(config.transfer.number, _our_number(call)))
+
+
 @router.websocket("/{provider}/ws/{token}")
 async def media_stream(websocket: WebSocket, provider: TelephonyProvider, token: str) -> None:
     call_id = await redeem_stream_token(token)
@@ -251,5 +275,17 @@ async def media_stream(websocket: WebSocket, provider: TelephonyProvider, token:
                 log.exception("hang-up after failed setup also failed")
         return
     setup.provider_call_id = setup.provider_call_id or start.provider_call_id
+
+    async def transfer_call() -> None:
+        assert setup.provider_call_id and call is not None
+        await client.transfer(
+            setup.provider_call_id,
+            url=f"{webhook_urls(account)['answer_url'].removesuffix('/answer')}/transfer"
+            f"?call={call_id}",
+            to_number=setup.config.transfer.number or "",
+            caller_id=_our_number(call),
+        )
+
+    setup.transfer = transfer_call
     with contextlib.suppress(WebSocketDisconnect):
         await run_on_websocket(websocket, setup, client.serializer(start))

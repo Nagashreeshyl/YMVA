@@ -59,6 +59,26 @@ class Announcement(BaseModel):
     translations: dict[str, str] = Field(default_factory=dict)
 
 
+class Transfer(BaseModel):
+    """Hand the call to a person when the caller asks for one (phone calls only)."""
+
+    enabled: bool = False
+    phone: str = Field(default="", max_length=20)  # E.164, e.g. +918012345678
+    when: str = Field(
+        default="The caller asks to speak to a person, or needs help you can't give",
+        max_length=500,
+    )
+
+    @property
+    def number(self) -> str | None:
+        """The phone number in E.164, or None until a complete one is entered (drafts save
+        while typing, so an unfinished number isn't an error)."""
+        v = "".join(ch for ch in self.phone if ch.isdigit() or ch == "+")
+        if len(v) == 10 and not v.startswith("+"):  # Indian number without the country code
+            v = "+91" + v
+        return v if re.fullmatch(r"\+\d{11,15}", v) else None
+
+
 class PipelineSettings(BaseModel):
     stt_provider: Literal["sarvam"] = "sarvam"
     llm_provider: Literal["google"] = "google"
@@ -180,6 +200,7 @@ class AgentConfig(BaseModel):
     # Optional per-agent override of state -> greeting language.
     state_languages: dict[str, str] = Field(default_factory=dict)
     announcement: Announcement = Field(default_factory=Announcement)
+    transfer: Transfer = Field(default_factory=Transfer)
     variables: list[Variable] = Field(default_factory=list)
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     gemini_live: GeminiLiveSettings = Field(default_factory=GeminiLiveSettings)

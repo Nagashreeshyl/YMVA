@@ -16,6 +16,7 @@ const LIVE = ["queued", "ringing", "in_progress"];
 const END_REASON: Record<string, string> = {
   agent_ended: "Agent ended the call",
   caller_hung_up: "Caller hung up",
+  transferred: "Transferred to a person",
   caller_silent: "Caller stayed silent",
   max_duration: "Reached the time limit",
   ended_from_dashboard: "Ended from the dashboard",

@@ -164,6 +164,8 @@ export interface AgentConfig {
   languages: string[];
   state_languages: Record<string, string>;
   announcement: { enabled: boolean; text: string; translations: Record<string, string> };
+  /** Hand the call to a person on this number when the caller asks (phone calls only). */
+  transfer?: { enabled: boolean; phone: string; when: string };
   /** Optional notes for {{names}} used in the text; values are given when calling. */
   variables: AgentVariable[];
   pipeline: {

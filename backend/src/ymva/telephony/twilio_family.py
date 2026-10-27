@@ -35,6 +35,15 @@ _STATUS_MAP = {
 }
 
 
+def _dial(to_number: str, caller_id: str) -> tuple[str, str]:
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f"<Response><Dial callerId={quoteattr(caller_id)}>"
+        f"<Number>{escape(to_number)}</Number></Dial></Response>",
+        "application/xml",
+    )
+
+
 def _say_and_hang_up(message: str) -> tuple[str, str]:
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -112,6 +121,16 @@ class TwilioClient(TelephonyProviderClient):
 
     async def hang_up(self, provider_call_id: str) -> None:
         await self._request("POST", f"/Calls/{provider_call_id}.json", data={"Status": "completed"})
+
+    async def transfer(
+        self, provider_call_id: str, *, url: str, to_number: str, caller_id: str
+    ) -> None:
+        await self._request(
+            "POST", f"/Calls/{provider_call_id}.json", data={"Url": url, "Method": "POST"}
+        )
+
+    def transfer_response(self, to_number: str, caller_id: str) -> tuple[str, str]:
+        return _dial(to_number, caller_id)
 
     def answer_response(self, ws_url: str, status_url: str) -> tuple[str, str]:
         return (
@@ -212,6 +231,16 @@ class TelnyxClient(TelephonyProviderClient):
         await self._request(
             "POST", f"/texml/calls/{provider_call_id}/update", json={"Status": "completed"}
         )
+
+    async def transfer(
+        self, provider_call_id: str, *, url: str, to_number: str, caller_id: str
+    ) -> None:
+        await self._request(
+            "POST", f"/texml/calls/{provider_call_id}/update", json={"Url": url, "Method": "POST"}
+        )
+
+    def transfer_response(self, to_number: str, caller_id: str) -> tuple[str, str]:
+        return _dial(to_number, caller_id)
 
     def answer_response(self, ws_url: str, status_url: str) -> tuple[str, str]:
         return (

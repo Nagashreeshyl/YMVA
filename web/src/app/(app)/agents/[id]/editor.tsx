@@ -11,6 +11,14 @@ import { api, type AgentConfig, type AgentDetail, type AgentOptions, type ToolDe
 import { cn } from "@/lib/cn";
 
 type Updater = (draft: AgentConfig) => void;
+
+const NO_TRANSFER = {
+  enabled: false,
+  phone: "",
+  when: "The caller asks to speak to a person, or needs help you can't give",
+};
+// Same rule as the server: a full number with country code, or 10 Indian digits.
+const isFullNumber = (v: string) => /^(\+\d{11,15}|\d{10})$/.test(v.replace(/[^\d+]/g, ""));
 export type SaveState = "saved" | "pending" | "saving" | "error";
 
 const AUTOSAVE_DELAY_MS = 700;
@@ -30,6 +38,7 @@ export function AgentEditor({
   const tools = useQuery({ queryKey: ["tools"], queryFn: () => api<ToolDef[]>("/tools") });
   // The editor owns its copy; it is re-created (via `key`) when the draft is replaced from outside.
   const [draft, setDraft] = useState<AgentConfig>(() => structuredClone(agent.config));
+  const transfer = draft.transfer ?? NO_TRANSFER;
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const languageName = (code: string) => options.languages.find((l) => l.code === code)?.name ?? code;
   const detected = detectVariables(draft);
@@ -396,6 +405,51 @@ export function AgentEditor({
                     )}
                   </Field>
                 ))}
+            </>
+          )}
+        </div>
+      </Panel>
+
+      <Panel title="Transfer to a person">
+        <div className="flex flex-col gap-4">
+          <Switch
+            label="Let the agent transfer the call to a colleague"
+            description="When the caller asks for a person, the agent says it's connecting them and the call rings this number. Works on phone calls (not browser tests or Exotel)."
+            checked={transfer.enabled}
+            onChange={(enabled) => update((d) => void (d.transfer = { ...transfer, enabled }))}
+          />
+          {transfer.enabled && (
+            <>
+              <Field
+                label="Number to transfer to"
+                hint={
+                  transfer.phone && !isFullNumber(transfer.phone)
+                    ? "Enter the full number; until then the agent can't transfer."
+                    : "With country code, e.g. +91 80 1234 5678."
+                }
+              >
+                {(p) => (
+                  <Input
+                    {...p}
+                    type="tel"
+                    inputMode="tel"
+                    placeholder="+91 80 1234 5678"
+                    value={transfer.phone}
+                    onChange={(e) => update((d) => void (d.transfer = { ...transfer, phone: e.target.value }))}
+                  />
+                )}
+              </Field>
+              <Field label="When to transfer" hint="In plain words. The agent follows this.">
+                {(p) => (
+                  <Textarea
+                    {...p}
+                    rows={2}
+                    className="min-h-0"
+                    value={transfer.when}
+                    onChange={(e) => update((d) => void (d.transfer = { ...transfer, when: e.target.value }))}
+                  />
+                )}
+              </Field>
             </>
           )}
         </div>
