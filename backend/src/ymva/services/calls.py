@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ymva.config import get_settings
-from ymva.models import Agent, AgentVersion, Call, CallStatus
+from ymva.models import Agent, AgentStatus, AgentVersion, Call, CallStatus
 from ymva.redis import get_redis
 from ymva.voice.config import AgentConfig
 
@@ -34,7 +34,12 @@ class LinesBusyError(CallSetupError):
 async def runnable_version(
     session: AsyncSession, agent: Agent, *, draft: bool = False
 ) -> tuple[AgentVersion, AgentConfig]:
-    """Published version for real calls; latest version for browser tests (draft=True)."""
+    """Published version for real calls; latest version for browser tests (draft=True).
+    Paused and archived agents take no real calls (browser tests still work)."""
+    if not draft and agent.status in (AgentStatus.PAUSED, AgentStatus.ARCHIVED):
+        raise CallSetupError(
+            f"{agent.name} is {agent.status.value}. Resume it to make and take calls."
+        )
     if draft:
         version = await session.scalar(
             select(AgentVersion)

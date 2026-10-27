@@ -8,7 +8,7 @@ import { CallStatusBadge, DirectionLabel } from "@/components/call-status";
 import { RecordingPlayer } from "@/components/recording-player";
 import { Badge, Button, ErrorNotice, Panel, Skeleton } from "@/components/ui";
 import { api, type CallDetail, type CallEvent } from "@/lib/api";
-import { formatDateTime, formatDuration, formatNumber, humanize, LANGUAGE_NAMES } from "@/lib/format";
+import { formatDateTime, formatDuration, formatNumber, humanize, LANGUAGE_NAMES, USD_TO_INR } from "@/lib/format";
 import { useMe } from "@/lib/session";
 
 const LIVE = ["queued", "ringing", "in_progress"];
@@ -241,9 +241,15 @@ export function CallView() {
               />
               {c.cost_total !== null && (
                 <Metric
-                  label="AI cost (estimate)"
-                  value={`$${c.cost_total.toFixed(4)}`}
-                  note={`≈ ₹${(c.cost_total * 88).toFixed(2)} · phone charges not included`}
+                  label="Cost (estimate)"
+                  value={`₹${(c.cost_total * USD_TO_INR).toFixed(2)}`}
+                  note={
+                    c.cost_breakdown.cost_usd?.phone_line !== undefined
+                      ? `AI ₹${((c.cost_total - c.cost_breakdown.cost_usd.phone_line) * USD_TO_INR).toFixed(2)} + phone line ₹${(c.cost_breakdown.cost_usd.phone_line * USD_TO_INR).toFixed(2)}`
+                      : c.direction === "web"
+                        ? "AI only (browser call: no phone line)"
+                        : "AI only: set the phone line rate in Integrations"
+                  }
                 />
               )}
               {usage && (

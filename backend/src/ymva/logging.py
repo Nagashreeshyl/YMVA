@@ -2,10 +2,12 @@
 
 import logging
 import re
+import sys
 from collections.abc import MutableMapping
 from typing import Any
 
 import structlog
+from loguru import logger as pipecat_logger
 
 from ymva.config import get_settings
 
@@ -51,6 +53,20 @@ def configure_logging() -> None:
         cache_logger_on_first_use=True,
     )
     logging.basicConfig(level=level, format="%(message)s")
+    # Pipecat logs through loguru, which defaults to DEBUG: that prints each call's system
+    # instruction (customer details) and what callers say. Same level as ours, phones masked.
+    pipecat_logger.remove()
+    pipecat_logger.add(
+        sys.stderr,
+        level=logging.getLevelName(level),
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{line} - {message}",
+        filter=_mask_record,
+    )
+
+
+def _mask_record(record: Any) -> bool:
+    record["message"] = _mask_value(record["message"])
+    return True
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:

@@ -91,7 +91,8 @@ class OverviewOut(BaseModel):
     completed_7d: int
     connect_rate_7d: float | None
     avg_duration_seconds_7d: float | None
-    cost_7d: float
+    cost_7d: float  # USD, AI plus phone line
+    cost_per_minute_7d: float | None  # USD per minute of talk time
     active_calls: int
     agents_active: int
     agents_total: int

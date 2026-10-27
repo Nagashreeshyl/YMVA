@@ -10,9 +10,9 @@ import {
   formatDuration,
   formatNumber,
   formatPercent,
-  formatUsd,
   humanize,
   LANGUAGE_NAMES,
+  USD_TO_INR,
 } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { useMe } from "@/lib/session";
@@ -218,9 +218,13 @@ export default function OverviewPage() {
             />
             <Stat
               className="border-t border-l md:border-t-0"
-              label="Cost"
-              value={formatUsd(overview.data.cost_7d)}
-              note="last 7 days"
+              label="Cost per minute"
+              value={
+                overview.data.cost_per_minute_7d === null
+                  ? "—"
+                  : `₹${(overview.data.cost_per_minute_7d * USD_TO_INR).toFixed(2)}`
+              }
+              note={`AI + phone line · ₹${(overview.data.cost_7d * USD_TO_INR).toFixed(0)} in 7 days`}
             />
           </dl>
 

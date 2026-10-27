@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ymva.models import (
     Agent,
+    AgentStatus,
     Call,
     CallDirection,
     CallStatus,
@@ -57,6 +58,8 @@ async def start_outbound_call(
             f"{account.provider.value.title()} can't reach this computer's address (localhost). "
             "Restart with ./ymva start --tunnel, or set a public domain."
         )
+    if agent.status in (AgentStatus.PAUSED, AgentStatus.ARCHIVED):  # a real phone rings
+        raise CallSetupError(f"{agent.name} is {agent.status.value}. Resume it to make calls.")
     version, config = await runnable_version(db, agent, draft=use_edits)
     if use_edits and agent.draft_config is not None:  # "Call a phone" testing unpublished edits
         try:

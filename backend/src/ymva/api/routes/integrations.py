@@ -41,6 +41,8 @@ class TelephonyAccountOut(BaseModel):
     credential_hint: str
     is_active: bool
     max_concurrent_calls: int
+    # What the provider charges per minute of call, in rupees (for the cost figures).
+    cost_per_minute_inr: float | None
     verified_at: datetime | None
     last_error: str | None
     answer_url: str
@@ -83,6 +85,7 @@ class TelephonyAccountIn(BaseModel):
     auth_id: str | None = Field(default=None, max_length=120)
     auth_token: str | None = Field(default=None, max_length=200)
     max_concurrent_calls: int = Field(default=10, ge=1, le=500)
+    cost_per_minute_inr: float | None = Field(default=None, ge=0, le=100)
 
     def given(self) -> dict[str, str]:
         legacy = {"auth_id": self.auth_id, "auth_token": self.auth_token}
@@ -96,6 +99,7 @@ class TelephonyAccountPatch(BaseModel):
     auth_id: str | None = Field(default=None, max_length=120)
     auth_token: str | None = Field(default=None, max_length=200)
     max_concurrent_calls: int | None = Field(default=None, ge=1, le=500)
+    cost_per_minute_inr: float | None = Field(default=None, ge=0, le=100)
     is_active: bool | None = None
 
     def given(self) -> dict[str, str]:
@@ -124,6 +128,7 @@ def _account_out(account: ProviderAccount, numbers: int) -> TelephonyAccountOut:
         credential_hint=account.credential_hint,
         is_active=account.is_active,
         max_concurrent_calls=account.max_concurrent_calls,
+        cost_per_minute_inr=account.settings.get("cost_per_minute_inr"),
         verified_at=account.verified_at,
         last_error=account.last_error,
         answer_url=urls["answer_url"],
@@ -232,6 +237,7 @@ async def add_account(
         credential_hint=cls.credential_hint(credentials),
         webhook_secret=new_webhook_secret(),
         max_concurrent_calls=body.max_concurrent_calls,
+        settings={"cost_per_minute_inr": body.cost_per_minute_inr},
     )
     db.add(account)
     await db.flush()
@@ -273,6 +279,10 @@ async def update_account(
     if body.max_concurrent_calls is not None:
         changes["max_concurrent_calls"] = [account.max_concurrent_calls, body.max_concurrent_calls]
         account.max_concurrent_calls = body.max_concurrent_calls
+    if body.cost_per_minute_inr is not None:
+        old = account.settings.get("cost_per_minute_inr")
+        changes["cost_per_minute_inr"] = [old, body.cost_per_minute_inr]
+        account.settings = {**account.settings, "cost_per_minute_inr": body.cost_per_minute_inr}
     if body.is_active is not None:
         changes["is_active"] = [account.is_active, body.is_active]
         account.is_active = body.is_active

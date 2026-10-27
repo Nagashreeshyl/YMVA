@@ -2,9 +2,10 @@
 
 Prices are list prices (pay-as-you-go), checked 26 Oct 2026 against Google's and Sarvam's
 published rates and third-party price trackers; update them here when the providers change
-them. Telephony charges are billed by the phone provider and not included.
+them. Phone-line charges use the rate the admin enters on each phone account.
 """
 
+import math
 from typing import Any
 
 USD_PER_INR = 1 / 88.0
@@ -54,10 +55,21 @@ def estimate(mode: str, llm_model: str, usage: dict[str, float]) -> dict[str, fl
     return parts
 
 
-def call_cost(config: dict[str, Any] | None, usage: dict[str, float]) -> dict[str, float]:
+def call_cost(
+    config: dict[str, Any] | None,
+    usage: dict[str, float],
+    *,
+    seconds: int = 0,
+    inr_per_minute: float | None = None,
+) -> dict[str, float]:
+    """AI cost plus the phone line: providers bill each started minute of an answered call."""
     config = config or {}
-    return estimate(
+    parts = estimate(
         config.get("mode", "pipeline"),
         config.get("pipeline", {}).get("llm_model", "gemini-3.5-flash-lite"),
         usage,
     )
+    if inr_per_minute and seconds > 0:
+        parts["phone_line"] = round(math.ceil(seconds / 60) * inr_per_minute * USD_PER_INR, 6)
+        parts["total"] = round(parts["total"] + parts["phone_line"], 6)
+    return parts

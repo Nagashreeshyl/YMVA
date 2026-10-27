@@ -33,6 +33,12 @@ async def overview(_: CurrentUser, db: DbSession) -> OverviewOut:
         select(func.avg(Call.duration_seconds)).where(in_week, Call.duration_seconds.is_not(None))
     )
     cost_7d = await db.scalar(select(func.coalesce(func.sum(Call.cost_total), 0)).where(in_week))
+    # Talk time of calls that have a cost, so cost per minute compares like with like.
+    seconds_7d = await db.scalar(
+        select(func.coalesce(func.sum(Call.duration_seconds), 0)).where(
+            in_week, Call.cost_total.is_not(None)
+        )
+    )
 
     local_day = cast(func.timezone(tz_name, Call.created_at), Date)
     daily_rows = (
@@ -85,6 +91,7 @@ async def overview(_: CurrentUser, db: DbSession) -> OverviewOut:
         connect_rate_7d=(completed_7d / calls_7d) if calls_7d else None,
         avg_duration_seconds_7d=float(avg_duration) if avg_duration is not None else None,
         cost_7d=float(cost_7d or 0),
+        cost_per_minute_7d=float(cost_7d or 0) / (seconds_7d / 60) if seconds_7d else None,
         active_calls=active_calls,
         agents_active=await db.scalar(
             select(func.count()).select_from(Agent).where(Agent.status == AgentStatus.ACTIVE)

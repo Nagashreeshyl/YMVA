@@ -110,6 +110,18 @@ def test_cost_estimate_per_engine() -> None:
     assert standard["gemini"] == 0.3 and standard["sarvam_stt"] > 0
 
 
+def test_call_cost_adds_the_phone_line_per_started_minute() -> None:
+    from ymva.voice.pricing import USD_PER_INR, call_cost
+
+    ai = call_cost({"mode": "gemini_live"}, {"llm_output_audio_tokens": 1e5})
+    both = call_cost(
+        {"mode": "gemini_live"}, {"llm_output_audio_tokens": 1e5}, seconds=61, inr_per_minute=0.6
+    )
+    assert abs(both["phone_line"] - 2 * 0.6 * USD_PER_INR) < 1e-6  # 61 s bills as 2 minutes
+    assert abs(both["total"] - (ai["total"] + both["phone_line"])) < 1e-6
+    assert "phone_line" not in call_cost({}, {}, seconds=0, inr_per_minute=0.6)  # unanswered
+
+
 async def test_results_are_sent_to_after_call_tools(
     admin_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

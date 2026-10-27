@@ -28,6 +28,9 @@ export function formatDuration(seconds: number | null): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
 }
 
+/** Costs are stored in USD; shown in rupees at the rate the backend uses (pricing.py). */
+export const USD_TO_INR = 88;
+
 export function formatUsd(amount: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
 }

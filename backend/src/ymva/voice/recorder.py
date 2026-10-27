@@ -24,7 +24,7 @@ from pipecat.observers.base_observer import BaseObserver, FramePushed
 
 from ymva.db import get_sessionmaker
 from ymva.logging import get_logger
-from ymva.models import Call, CallEvent, CallEventType, CallStatus
+from ymva.models import Call, CallEvent, CallEventType, CallStatus, ProviderAccount
 from ymva.voice.pricing import call_cost
 
 log = get_logger(__name__)
@@ -179,7 +179,17 @@ class CallRecorder:
             call.languages = self.languages
             if metrics:
                 call.latency = metrics.latency_report()
-                cost = call_cost(call.agent_config, metrics.usage)
+                account = (
+                    await session.get(ProviderAccount, call.provider_account_id)
+                    if call.provider_account_id
+                    else None
+                )
+                cost = call_cost(
+                    call.agent_config,
+                    metrics.usage,
+                    seconds=call.duration_seconds or 0,
+                    inr_per_minute=account.settings.get("cost_per_minute_inr") if account else None,
+                )
                 call.cost_breakdown = {"usage": metrics.usage, "cost_usd": cost}
                 call.cost_total = Decimal(str(cost["total"]))
             if error:

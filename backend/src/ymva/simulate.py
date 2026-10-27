@@ -64,7 +64,9 @@ SAMPLE_VALUES = {
     "due_amount": "50000",
     "due_date": "24/11/2026",
 }
-LOUD = 1500  # int16 peak that counts as the agent speaking
+# Average level (RMS) of a 20 ms chunk that counts as the agent speaking: speech is well
+# above it, the office background (about 400 RMS at full volume) well below.
+LOUD = 1200
 CHUNK = 640  # 20 ms of 16 kHz audio
 
 
@@ -183,7 +185,8 @@ class Customer:
                             continue
                         audio = self._decode(base64.b64decode(event["media"]["payload"]))
                     samples = np.frombuffer(audio, np.int16)
-                    if samples.size and int(np.abs(samples).max()) > LOUD:
+                    level = np.sqrt(np.mean(samples.astype(np.float64) ** 2)) if samples.size else 0
+                    if level > LOUD:
                         self.loud.append(self._now())
 
             async def send(pcm: bytes) -> None:

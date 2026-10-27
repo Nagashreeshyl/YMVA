@@ -260,6 +260,14 @@ function AccountRow({
       api(`/integrations/telephony/${account.id}`, { method: "DELETE" }),
     onSuccess: refresh,
   });
+  const setRate = useMutation({
+    mutationFn: (rate: number) =>
+      api(`/integrations/telephony/${account.id}`, {
+        method: "PATCH",
+        json: { cost_per_minute_inr: rate },
+      }),
+    onSuccess: refresh,
+  });
 
   return (
     <li className="flex flex-col gap-3 px-5 py-4">
@@ -324,6 +332,55 @@ function AccountRow({
         </p>
       )}
       {remove.isError && <ErrorNotice error={remove.error} />}
+      {canEdit ? (
+        <form
+          className="flex flex-wrap items-end gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const rate = Number(new FormData(e.currentTarget).get("rate"));
+            if (!Number.isNaN(rate)) setRate.mutate(rate);
+          }}
+        >
+          <div className="w-56">
+            <Field
+              label="Phone line cost (₹ per minute)"
+              hint="From your plan. Added to each call's cost."
+            >
+              {(p) => (
+                <Input
+                  {...p}
+                  name="rate"
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={0.01}
+                  required
+                  placeholder="e.g. 0.60"
+                  defaultValue={account.cost_per_minute_inr ?? ""}
+                />
+              )}
+            </Field>
+          </div>
+          <Button
+            type="submit"
+            variant="secondary"
+            size="sm"
+            loading={setRate.isPending}
+          >
+            Save rate
+          </Button>
+          {setRate.isSuccess && (
+            <span className="text-[13px] text-success">Saved</span>
+          )}
+          {setRate.isError && <ErrorNotice error={setRate.error} />}
+        </form>
+      ) : (
+        account.cost_per_minute_inr !== null && (
+          <p className="text-[13px] text-muted">
+            Phone line: ₹{account.cost_per_minute_inr} per minute
+          </p>
+        )
+      )}
       {open && (
         <div className="flex flex-col gap-3 rounded-xl bg-rail p-4">
           <p className="text-[13px] text-muted">{setup}</p>
@@ -369,6 +426,9 @@ function ConnectAccountForm({
             provider.fields.map((field) => [field.key, f.get(field.key)]),
           ),
           max_concurrent_calls: Number(f.get("max_concurrent_calls") || 10),
+          cost_per_minute_inr: f.get("cost_per_minute_inr")
+            ? Number(f.get("cost_per_minute_inr"))
+            : null,
         });
       }}
     >
@@ -446,6 +506,22 @@ function ConnectAccountForm({
             min={1}
             max={500}
             defaultValue={10}
+          />
+        )}
+      </Field>
+      <Field
+        label="Phone line cost (₹ per minute)"
+        hint="Optional. From your plan; added to each call's cost."
+      >
+        {(p) => (
+          <Input
+            {...p}
+            name="cost_per_minute_inr"
+            type="number"
+            min={0}
+            max={100}
+            step={0.01}
+            placeholder="e.g. 0.60"
           />
         )}
       </Field>

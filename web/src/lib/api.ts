@@ -65,6 +65,8 @@ export interface Overview {
   connect_rate_7d: number | null;
   avg_duration_seconds_7d: number | null;
   cost_7d: number;
+  /** USD per minute of talk time (AI + phone line); null with no calls yet. */
+  cost_per_minute_7d: number | null;
   active_calls: number;
   agents_active: number;
   agents_total: number;
@@ -111,6 +113,8 @@ export interface TelephonyAccount {
   credential_hint: string;
   is_active: boolean;
   max_concurrent_calls: number;
+  /** What the provider charges per minute, in rupees; null until the admin enters it. */
+  cost_per_minute_inr: number | null;
   verified_at: string | null;
   last_error: string | null;
   answer_url: string;
@@ -354,7 +358,7 @@ export interface CallDetail extends CallSummary {
   variables: Record<string, string>;
   extracted: Record<string, string>;
   latency: Record<string, LatencySummary>;
-  cost_breakdown: { usage?: Record<string, number> };
+  cost_breakdown: { usage?: Record<string, number>; cost_usd?: Record<string, number> };
   error: string | null;
   events: CallEvent[];
 }
