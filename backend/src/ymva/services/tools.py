@@ -225,13 +225,20 @@ async def _tab(client: httpx.AsyncClient, config: SheetsConfig, email: str) -> s
     return str(by_gid[0] if by_gid else tabs[0]["title"])
 
 
+def _saved(wanted: dict[str, str], updated: bool) -> dict[str, Any]:
+    result: dict[str, Any] = {"ok": True, "saved": {h: v for h, v in wanted.items() if v}}
+    if updated:
+        result["note"] = "Updated the row saved earlier in this call; no new row was added."
+    return result
+
+
 def _cell(value: str) -> str:
     # A caller's words must stay text: a leading "=" would make Google run it as a formula.
     return "'" + value if value.startswith("=") else value
 
 
 async def _run_apps_script(
-    config: SheetsConfig, secrets: dict[str, Any], values: dict[str, str]
+    config: SheetsConfig, secrets: dict[str, Any], values: dict[str, str], memory: dict[str, Any]
 ) -> dict[str, Any]:
     if not secrets.get("script_url"):
         raise ToolError(
@@ -249,6 +256,8 @@ async def _run_apps_script(
         "columns": columns,
         "match_column": config.match_column.strip(),
         "match_value": render(config.match_value, values, missing="").strip(),
+        # Set only after this call added a row: the script then updates that row instead.
+        "row": memory.get("row"),
     }
     # Google answers a web app POST with a redirect to the result, which httpx follows as GET.
     async with httpx.AsyncClient(
@@ -269,17 +278,26 @@ async def _run_apps_script(
     if not data.get("ok"):
         raise ToolError(str(data.get("error") or "The Apps Script reported an error")[:300])
     if config.action == "append_row":
-        return {"ok": True, "saved": {h: v for h, v in columns if v}}
+        updated = memory.get("row") is not None
+        if isinstance(data.get("row"), int):
+            memory["row"] = data["row"]
+        return _saved(dict(columns), updated)
     if data.get("found"):
         return {"ok": True, "found": True, "row": data.get("row", {})}
     return {"ok": True, "found": False}
 
 
 async def _run_sheets(
-    config: SheetsConfig, secrets: dict[str, Any], values: dict[str, str]
+    config: SheetsConfig,
+    secrets: dict[str, Any],
+    values: dict[str, str],
+    memory: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """`memory` lives for one call: after this call adds a row, saving again updates that row
+    (never any other), so the agent can correct what it saved without adding duplicates."""
+    memory = {} if memory is None else memory
     if config.connection == "apps_script":
-        return await _run_apps_script(config, secrets, values)
+        return await _run_apps_script(config, secrets, values, memory)
     if not secrets.get("service_account"):
         raise ToolError(
             "This tool has no Google service account key yet. Paste the key in the tool and "
@@ -313,6 +331,9 @@ async def _run_sheets(
                 )
                 if titled.is_error:
                     raise _sheets_error(titled, email)
+            if isinstance(memory.get("row"), int):
+                return await _update_own_row(client, f"{base}/{tab}", memory["row"],
+                                             sheet_headers, wanted, email)  # fmt: skip
             row = [wanted.get(h, "") for h in sheet_headers]
             added = await client.post(
                 f"{base}/{tab}!A1:append",
@@ -321,7 +342,10 @@ async def _run_sheets(
             )
             if added.is_error:
                 raise _sheets_error(added, email)
-            return {"ok": True, "saved": {h: v for h, v in wanted.items() if v}}
+            where = str(added.json().get("updates", {}).get("updatedRange", ""))
+            if found := re.search(r"![A-Z]+(\d+)", where):
+                memory["row"] = int(found.group(1))
+            return _saved(wanted, updated=False)
 
         # shortcut: reads the whole tab, fine up to tens of thousands of rows; past that use
         # a database tool.
@@ -344,6 +368,31 @@ async def _run_sheets(
                     "row": dict(zip(sheet_headers, row, strict=False)),
                 }
         return {"ok": True, "found": False}
+
+
+async def _update_own_row(
+    client: httpx.AsyncClient,
+    tab_url: str,
+    row: int,
+    sheet_headers: list[str],
+    wanted: dict[str, str],
+    email: str,
+) -> dict[str, Any]:
+    """Rewrite the row this call added: new values replace old ones, blanks keep what's there."""
+    current = await client.get(f"{tab_url}!{row}:{row}")
+    if current.is_error:
+        raise _sheets_error(current, email)
+    old = (current.json().get("values") or [[]])[0]
+    merged = [
+        wanted.get(h) or (old[i] if i < len(old) else "") for i, h in enumerate(sheet_headers)
+    ]
+    put = await client.put(
+        f"{tab_url}!{row}:{row}", params={"valueInputOption": "USER_ENTERED"},
+        json={"values": [merged]},
+    )  # fmt: skip
+    if put.is_error:
+        raise _sheets_error(put, email)
+    return _saved(wanted, updated=True)
 
 
 # ---- HTTP ---------------------------------------------------------------------------------
@@ -547,12 +596,15 @@ async def run_tool(
     config: dict[str, Any],
     secrets: dict[str, Any] | None,
     values: dict[str, str],
+    memory: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run a tool with the values filled in. Always returns a dict for the model."""
+    """Run a tool with the values filled in. Always returns a dict for the model.
+
+    `memory` is kept by the caller for one phone call (see _run_sheets)."""
     try:
         parsed = CONFIG_TYPES[tool_type].model_validate(config)
         runners: dict[str, Any] = {
-            "google_sheets": _run_sheets,
+            "google_sheets": lambda c, s, v: _run_sheets(c, s, v, memory),
             "http": _run_http,
             "database": _run_database,
             "mcp": _run_mcp,

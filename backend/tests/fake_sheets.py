@@ -27,12 +27,17 @@ class FakeSheets:
         if tab not in self.tabs:
             return httpx.Response(400, json={"error": {"message": f"Unable to parse range: {tab}"}})
         rows = self.tabs[tab]
+        one = re.fullmatch(r"(\d+):\1", cells)  # a single row, e.g. 1:1 or 5:5
+        n = int(one.group(1)) if one else 0
         if request.method == "GET":
-            wanted = rows[:1] if cells == "1:1" else rows
+            wanted = rows[n - 1 : n] if one else rows
             return httpx.Response(200, json={"values": wanted} if wanted else {})
         body = json.loads(request.content)["values"]
-        if request.method == "PUT":  # title row
-            rows[:1] = [body[0]]
-        else:  # append
-            rows.append(body[0])
-        return httpx.Response(200, json={"updates": {"updatedRows": 1}})
+        if request.method == "PUT":  # one whole row
+            rows.extend([[]] * (n - len(rows)))
+            rows[n - 1] = body[0]
+            return httpx.Response(200, json={"updatedRange": f"'{tab}'!A{n}"})
+        rows.append(body[0])  # append
+        return httpx.Response(
+            200, json={"updates": {"updatedRows": 1, "updatedRange": f"'{tab}'!A{len(rows)}"}}
+        )

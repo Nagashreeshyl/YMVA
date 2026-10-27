@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import Any
 
@@ -337,3 +338,71 @@ async def test_sheet_tool_via_apps_script_needs_no_key(
     assert result == {"ok": False, "error": "The sheet has no column named Loan"}
     result = await tools_service.run_tool("google_sheets", config, {}, {})
     assert not result["ok"] and "web app address" in result["error"]
+
+
+async def test_saving_again_in_a_call_updates_only_that_calls_row(
+    requests_seen: list[httpx.Request], sheets: FakeSheets
+) -> None:
+    sheets.tabs["Sheet1"].append(["OLD", "2026-01-01", ""])  # an older call's row
+    secrets = {"service_account": SERVICE_ACCOUNT}
+    memory: dict[str, Any] = {}  # kept for one call
+    first = {"promised_date": "2026-11-20", "loan_id": "YM1"}
+    assert (
+        await tools_service.run_tool("google_sheets", SHEET_TOOL["config"], secrets, first, memory)
+    )["ok"]
+    fixed = await tools_service.run_tool(
+        "google_sheets", SHEET_TOOL["config"], secrets, {"promised_date": "2026-11-25"}, memory
+    )
+    assert fixed["ok"] and "Updated the row" in fixed["note"]
+    # One row for this call, corrected; the blank loan ID kept what was saved; old row untouched.
+    assert sheets.tabs["Sheet1"][1:] == [["OLD", "2026-01-01", ""], ["YM1", "2026-11-25", ""]]
+
+    # A new call (fresh memory) adds its own row.
+    await tools_service.run_tool("google_sheets", SHEET_TOOL["config"], secrets, first, {})
+    assert len(sheets.tabs["Sheet1"]) == 4
+
+
+async def test_a_call_never_runs_the_same_tool_twice_with_the_same_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from ymva.db import get_sessionmaker
+    from ymva.models import Call, CallDirection, CallStatus
+    from ymva.services.tools import LoadedTool, ToolParam
+    from ymva.voice import session as session_mod
+    from ymva.voice.templates import interest_reminder
+
+    runs: list[dict[str, str]] = []
+
+    async def fake_run(kind: str, config: Any, secrets: Any, values: Any, memory: Any) -> Any:
+        runs.append(values)
+        return {"ok": True, "saved": {"date": values["promised_date"]}}
+
+    monkeypatch.setattr(session_mod, "run_tool", fake_run)
+    async with get_sessionmaker()() as db:
+        call = Call(direction=CallDirection.WEB, status=CallStatus.IN_PROGRESS)
+        db.add(call)
+        await db.commit()
+    tool = LoadedTool(
+        "save_promise", "Save the date", "http", {}, [ToolParam(name="promised_date")], None
+    )
+    setup = session_mod.CallSetup(
+        call_id=call.id, config=interest_reminder(), variables={}, keys={}, tools=[tool]
+    )
+    session = session_mod.CallSession(setup, transport=None)  # type: ignore[arg-type]
+    answers: list[dict[str, Any]] = []
+
+    async def use(date: str) -> None:
+        async def reply(result: dict[str, Any], **_: Any) -> None:
+            answers.append(result)
+
+        await session._run_tool(
+            SimpleNamespace(function_name="save_promise", arguments={"promised_date": date},
+                            result_callback=reply)  # type: ignore[arg-type]
+        )  # fmt: skip
+
+    await asyncio.gather(use("2026-11-20"), use("2026-11-20 "))  # asked twice at once
+    await use("2026-11-25")  # a correction does run
+    assert [r["promised_date"] for r in runs] == ["2026-11-20", "2026-11-25"]
+    assert "wasn't run again" in answers[1]["note"]

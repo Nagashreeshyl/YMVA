@@ -1,6 +1,7 @@
 """Runs one call: builds the Pipecat pipeline for the agent's mode and drives it to the end."""
 
 import asyncio
+import json
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -180,6 +181,11 @@ class CallSession:
         self._live_llm: Any = None
         self._guard: LanguageGuard | None = None
         self._transferring = False
+        # Tool runs in this call: a repeat with the same details is not run again, and each
+        # tool's memory lets a second save update the row this call added (see run_tool).
+        self._tool_results: dict[tuple[str, str], dict[str, Any]] = {}
+        self._tool_memory: dict[str, dict[str, Any]] = {}
+        self._tool_lock = asyncio.Lock()
 
     async def _warm_up_llm(self) -> None:
         """Open the connection to the model while the greeting plays, so the first reply
@@ -288,7 +294,24 @@ class CallSession:
         )
         now = datetime.now(ZoneInfo(get_settings().timezone))
         values = call_facts(now, self.setup.customer_phone) | self.setup.variables | args
-        result = await run_tool(tool.type, tool.config, tool.secrets, values)
+        same = (tool.name, json.dumps({k: v.strip().casefold() for k, v in args.items()},
+                                      sort_keys=True))  # fmt: skip
+        # One tool run at a time per call, so two quick identical requests can't both run.
+        async with self._tool_lock:
+            done = self._tool_results.get(same)
+            if done is not None and done.get("ok"):
+                await self.recorder.event(
+                    CallEventType.STATUS,
+                    f"Didn't run {tool.name} again: same details as earlier in this call",
+                )
+                await params.result_callback(
+                    {**done, "note": "Already done earlier in this call with these same "
+                     "details, so it wasn't run again. Don't repeat it; carry on."}
+                )  # fmt: skip
+                return
+            memory = self._tool_memory.setdefault(tool.name, {})
+            result = await run_tool(tool.type, tool.config, tool.secrets, values, memory)
+            self._tool_results[same] = result
         await self.recorder.event(
             CallEventType.TOOL_RESULT,
             "ok" if result.get("ok") else str(result.get("error", "failed")),

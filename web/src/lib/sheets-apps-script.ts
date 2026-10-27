@@ -54,8 +54,16 @@ function handle_(req) {
       headers = headers.concat(missing);
       sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     }
+    // A row YMVA added earlier in the same call: update it (blanks keep what's there).
+    var row = Number(req.row);
+    if (row >= 2 && row <= sheet.getLastRow()) {
+      var cells = sheet.getRange(row, 1, 1, headers.length);
+      var old = cells.getValues()[0];
+      cells.setValues([headers.map(function (h, j) { return wanted[h] ? wanted[h] : old[j]; })]);
+      return { ok: true, row: row };
+    }
     sheet.appendRow(headers.map(function (h) { return h in wanted ? wanted[h] : ""; }));
-    return { ok: true };
+    return { ok: true, row: sheet.getLastRow() };
   }
 
   if (req.action === "find_row") {
