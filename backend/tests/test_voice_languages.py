@@ -219,7 +219,7 @@ def test_everyday_mix_covers_every_language() -> None:
     assert "Kanglish" not in system_instruction(config, {}, "kn", "Asia/Kolkata")
 
 
-def _session(config: AgentConfig) -> object:
+def _session(config: AgentConfig, variables: dict[str, str] | None = None) -> object:
     import uuid
 
     from pipecat.processors.frame_processor import FrameProcessor
@@ -237,7 +237,10 @@ def _session(config: AgentConfig) -> object:
             return self._out
 
     setup = CallSetup(
-        call_id=uuid.uuid4(), config=config, variables={}, keys={"google": "x", "sarvam": "x"}
+        call_id=uuid.uuid4(),
+        config=config,
+        variables=variables or {},
+        keys={"google": "x", "sarvam": "x"},
     )
     return CallSession(setup, Transport())  # type: ignore[arg-type]
 
@@ -263,3 +266,21 @@ def test_agent_can_keep_to_one_language() -> None:
     assert "Speak only Kannada for the whole call" in text
     follow = system_instruction(interest_reminder(), {}, "kn", "Asia/Kolkata")
     assert "explicitly asks you to speak a particular language" in follow
+
+
+async def test_preferred_language_holds_until_the_caller_asks_for_another() -> None:
+    from pipecat.frames.frames import TranscriptionFrame
+
+    config = interest_reminder().model_copy(update={"mode": "gemini_live"})
+    session = _session(config, {"preferred_language": "kn"})
+    _, _, _, guard, _ = session._build()  # type: ignore[attr-defined]
+    assert session.opening == "kn"  # type: ignore[attr-defined]
+    # Stray speech in another script doesn't switch a call with a preferred language...
+    await run_test(guard, frames_to_send=[TranscriptionFrame("हाँ जी बोलिए अभी", "", "")])
+    assert guard.current == "kn"
+    # ...an explicit request (the model's switch_language action) does.
+    await guard.switch_to("hi", steer=False)
+    assert guard.current == "hi"
+    text = system_instruction(config, {"preferred_language": "kn"}, "kn", "Asia/Kolkata")
+    assert "preferred language is Kannada" in text and "explicitly asks" in text
+    assert "call-screening assistant" in text

@@ -50,6 +50,7 @@ class LanguageGuard(FrameProcessor):
         on_switch: SwitchCallback,
         tts: SarvamTTSService | None = None,
         gemini_live: Any | None = None,
+        auto: bool = True,
     ) -> None:
         super().__init__()
         self._allowed = allowed
@@ -57,6 +58,8 @@ class LanguageGuard(FrameProcessor):
         self._on_switch = on_switch
         self._tts = tts
         self._gemini_live = gemini_live
+        # Off in a fixed-language call: only an explicit request (switch_to) changes language.
+        self._auto = auto
 
     def _language_of(self, frame: TranscriptionFrame) -> str | None:
         # A word or two ("I.", "ok") is too little to judge, and STT can mislabel such
@@ -80,7 +83,7 @@ class LanguageGuard(FrameProcessor):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
-        if isinstance(frame, TranscriptionFrame) and frame.text.strip():
+        if self._auto and isinstance(frame, TranscriptionFrame) and frame.text.strip():
             code = self._language_of(frame)
             if code and code != self.current:
                 await self.switch_to(code)

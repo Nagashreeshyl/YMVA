@@ -55,12 +55,18 @@ from ymva.voice.gemini_live import ResilientGeminiLive
 from ymva.voice.guard import LanguageGuard
 from ymva.voice.languages import LANGUAGES
 from ymva.voice.live_state import ConversationState
-from ymva.voice.prompts import GOODBYES, opening_language, opening_lines, system_instruction
+from ymva.voice.prompts import (
+    GOODBYES,
+    language_is_fixed,
+    opening_language,
+    opening_lines,
+    system_instruction,
+)
 from ymva.voice.recorder import CallRecorder, ErrorReporter, MetricsObserver
 from ymva.voice.recording import CallRecording
 from ymva.voice.sarvam_voice import SarvamVoice
 from ymva.voice.trim import LeadingSilenceTrimmer
-from ymva.voice.turns import GuardedSpeechStart, turn_stop_strategy
+from ymva.voice.turns import turn_stop_strategy
 
 log = get_logger(__name__)
 
@@ -68,13 +74,16 @@ PIPELINE_SAMPLE_RATE = 16000
 GEMINI_OUTPUT_SAMPLE_RATE = 24000
 
 
-def language_schema(languages: list[str]) -> FunctionSchema:
+def language_schema(languages: list[str], explicit_only: bool = False) -> FunctionSchema:
     """Gemini Live hears the caller directly, so it is the best judge of a language change;
     calling this makes the switch explicit (recorded, and the reply language is then pinned)."""
     return FunctionSchema(
         name="switch_language",
         description=(
-            "Call this immediately whenever the caller speaks a different language from the "
+            "Call this only when the caller explicitly asks you to speak another language. "
+            "Then reply in that language."
+            if explicit_only
+            else "Call this immediately whenever the caller speaks a different language from the "
             "one you are using, or asks you to use a language. Then reply in that language."
         ),
         properties={
@@ -244,7 +253,8 @@ class CallSession:
         if self._guard is None or code not in self._switchable():
             await params.result_callback({"ok": False, "error": "That language isn't available"})
             return
-        await self._guard.switch_to(code, steer=False)
+        # Gemini Live already follows its own decision; Standard mode needs the voice changed.
+        await self._guard.switch_to(code, steer=self.setup.config.mode != "gemini_live")
         info = LANGUAGES[code]
         await params.result_callback(
             {"ok": True, "note": f"From now on reply only in {info.name} ({info.native}), "
@@ -384,9 +394,13 @@ class CallSession:
     # ---- pipeline construction ---------------------------------------------------------
 
     def _switchable(self) -> list[str]:
-        """Languages the call may switch to: only the opening one when the agent keeps to it."""
+        """Languages the call may change to. A preferred language still allows a change the
+        caller explicitly asks for; an agent kept to one language never changes."""
         config = self.setup.config
         return config.languages if config.follow_caller_language else [self.opening]
+
+    def _fixed(self) -> bool:
+        return language_is_fixed(self.setup.config, self.setup.variables)
 
     def _build(self) -> tuple[Pipeline, LLMContext, int, LanguageGuard, Any]:
         config = self.setup.config
@@ -394,8 +408,10 @@ class CallSession:
         self.opening = opening_language(config, variables)
         instruction = system_instruction(config, variables, self.opening, get_settings().timezone)
         transfer = [transfer_schema(config.transfer.when)] if self._can_transfer else []
-        switching = config.mode == "gemini_live" and len(self._switchable()) > 1
-        language = [language_schema(config.languages)] if switching else []
+        # Gemini Live hears the caller itself; in a fixed-language call any mode needs the action
+        # for the caller's explicit requests (nothing else switches it).
+        switching = len(self._switchable()) > 1 and (config.mode == "gemini_live" or self._fixed())
+        language = [language_schema(config.languages, self._fixed())] if switching else []
         tools = ToolsSchema(
             standard_tools=[END_CALL, *transfer, *language, *(t.schema() for t in self.setup.tools)]
         )
@@ -413,9 +429,7 @@ class CallSession:
         user_params = LLMUserAggregatorParams(
             vad_analyzer=vad,
             user_idle_timeout=config.limits.silence_timeout_seconds,
-            # Only detected speech starts a turn. Pipecat would also start one on any transcript,
-            # and Gemini Live transcribes background voices too: that cut the agent off.
-            user_turn_strategies=UserTurnStrategies(start=[GuardedSpeechStart()], stop=[turn_end]),
+            user_turn_strategies=UserTurnStrategies(stop=[turn_end]),
         )
 
         if config.mode == "gemini_live":
@@ -461,7 +475,7 @@ class CallSession:
             pair = LLMContextAggregatorPair(context, user_params=user_params)
             guard = LanguageGuard(
                 allowed=self._switchable(), initial=self.opening, on_switch=on_switch,
-                gemini_live=llm,
+                gemini_live=llm, auto=not self._fixed(),
             )  # fmt: skip
             pipeline = Pipeline(
                 [
@@ -513,6 +527,7 @@ class CallSession:
             service.register_function(
                 "transfer_call", self._transfer_call, cancel_on_interruption=False
             )
+            service.register_function("switch_language", self._switch_language)
             for tool in self.setup.tools:
                 service.register_function(tool.name, self._run_tool)
         self._warm_llm = llms[0]
@@ -543,8 +558,9 @@ class CallSession:
         context = LLMContext(messages=[], tools=tools)
         pair = LLMContextAggregatorPair(context, user_params=user_params)
         guard = LanguageGuard(
-            allowed=self._switchable(), initial=self.opening, on_switch=on_switch, tts=tts
-        )
+            allowed=self._switchable(), initial=self.opening, on_switch=on_switch, tts=tts,
+            auto=not self._fixed(),
+        )  # fmt: skip
         pipeline = Pipeline(
             [
                 self.transport.input(),
