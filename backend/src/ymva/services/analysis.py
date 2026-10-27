@@ -179,11 +179,23 @@ async def send_results(call_id: uuid.UUID) -> None:
             analysis = AgentConfig.model_validate(call.agent_config).analysis
         except ValidationError:
             return
-        tools = await load_tools(db, analysis.send_to)
+        tools = await load_tools(db, analysis.send_to, analysis.details)
         values = result_values(call, analysis)
         seq = await db.scalar(select(func.max(CallEvent.seq)).where(CallEvent.call_id == call_id))
+        # What each tool remembered during the call (e.g. the sheet row it added), so the
+        # results complete that row instead of adding a second one.
+        memories: dict[str, dict[str, Any]] = {}
+        for event in await db.scalars(
+            select(CallEvent)
+            .where(CallEvent.call_id == call_id, CallEvent.type == CallEventType.TOOL_RESULT)
+            .order_by(CallEvent.seq)
+        ):
+            if isinstance((event.data or {}).get("memory"), dict):
+                memories[event.data["tool"]] = dict(event.data["memory"])
         for tool in tools:
-            result = await run_tool(tool.type, tool.config, tool.secrets, values)
+            result = await run_tool(
+                tool.type, tool.config, tool.secrets, values, memories.get(tool.name, {})
+            )
             seq = (seq or 0) + 1
             db.add(
                 CallEvent(

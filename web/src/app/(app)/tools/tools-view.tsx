@@ -59,6 +59,7 @@ const NEW_SHEET: SheetsToolConfig = {
   columns: [{ header: "", value: "" }],
   match_column: "",
   match_value: "",
+  agent_details: true,
 };
 const NEW_HTTP: HttpToolConfig = {
   method: "POST",
@@ -159,6 +160,10 @@ function ToolForm({
     setDraft((d) => ({ ...d, ...change }));
   const sheet = draft.config as SheetsToolConfig;
   const viaScript = sheet.connection === "apps_script";
+  const followsAgent =
+    draft.type === "google_sheets" &&
+    sheet.action === "append_row" &&
+    Boolean(sheet.agent_details);
   // Stored secrets of the other kind don't count once the connection is switched.
   const savedViaScript = saved?.secret_hint === "Apps Script web app";
   const http = draft.config as HttpToolConfig;
@@ -480,88 +485,97 @@ function ToolForm({
         </div>
       </Panel>
 
-      <Panel
-        title="What the agent fills in"
-        description="Details the agent gets from the customer during the call. Use them below as {{name}}, along with the call's customer details (e.g. {{loan_id}}) and {{call_date}}, {{call_time}}, {{customer_phone}}."
-      >
-        <div className="flex flex-col gap-2">
-          {draft.params.map((param, i) => (
-            <div
-              key={i}
-              className="grid gap-2 sm:grid-cols-[200px_1fr_auto_auto] sm:items-center"
-            >
-              <Input
-                aria-label={`Detail ${i + 1}: name`}
-                placeholder="promised_date"
-                value={param.name}
-                onChange={(e) =>
-                  editParams(
-                    draft.params.map((x, j) =>
-                      j === i
-                        ? {
-                            ...x,
-                            name: e.target.value
-                              .toLowerCase()
-                              .replace(/[^a-z0-9_]/g, "_"),
-                          }
-                        : x,
-                    ),
-                  )
-                }
-              />
-              <Input
-                aria-label={`Detail ${i + 1}: description`}
-                placeholder="Date the customer will pay, as YYYY-MM-DD"
-                value={param.description}
-                onChange={(e) =>
-                  editParams(
-                    draft.params.map((x, j) =>
-                      j === i ? { ...x, description: e.target.value } : x,
-                    ),
-                  )
-                }
-              />
-              <label className="flex items-center gap-1.5 text-[13px] text-muted">
-                <input
-                  type="checkbox"
-                  checked={param.required}
+      {followsAgent ? (
+        <Panel title="What the agent fills in">
+          <p className="text-[13px] text-muted">
+            Each agent fills in its own “Details to write down” (Configure →
+            After the call). Change them there and this tool follows.
+          </p>
+        </Panel>
+      ) : (
+        <Panel
+          title="What the agent fills in"
+          description="Details the agent gets from the customer during the call. Use them below as {{name}}, along with the call's customer details (e.g. {{loan_id}}) and {{call_date}}, {{call_time}}, {{customer_phone}}."
+        >
+          <div className="flex flex-col gap-2">
+            {draft.params.map((param, i) => (
+              <div
+                key={i}
+                className="grid gap-2 sm:grid-cols-[200px_1fr_auto_auto] sm:items-center"
+              >
+                <Input
+                  aria-label={`Detail ${i + 1}: name`}
+                  placeholder="promised_date"
+                  value={param.name}
                   onChange={(e) =>
                     editParams(
                       draft.params.map((x, j) =>
-                        j === i ? { ...x, required: e.target.checked } : x,
+                        j === i
+                          ? {
+                              ...x,
+                              name: e.target.value
+                                .toLowerCase()
+                                .replace(/[^a-z0-9_]/g, "_"),
+                            }
+                          : x,
                       ),
                     )
                   }
                 />
-                Required
-              </label>
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label={`Remove ${param.name || `detail ${i + 1}`}`}
-                onClick={() =>
-                  editParams(draft.params.filter((_, j) => j !== i))
-                }
-              >
-                <X className="size-4" aria-hidden />
-              </Button>
-            </div>
-          ))}
-          <Button
-            variant="secondary"
-            size="sm"
-            className="w-fit"
-            onClick={() =>
-              editParams([
-                ...draft.params,
-                { name: "", description: "", required: true },
-              ])
-            }
-          >
-            <Plus className="size-3.5" aria-hidden /> Add detail
-          </Button>
-        </div>
-      </Panel>
+                <Input
+                  aria-label={`Detail ${i + 1}: description`}
+                  placeholder="Date the customer will pay, as YYYY-MM-DD"
+                  value={param.description}
+                  onChange={(e) =>
+                    editParams(
+                      draft.params.map((x, j) =>
+                        j === i ? { ...x, description: e.target.value } : x,
+                      ),
+                    )
+                  }
+                />
+                <label className="flex items-center gap-1.5 text-[13px] text-muted">
+                  <input
+                    type="checkbox"
+                    checked={param.required}
+                    onChange={(e) =>
+                      editParams(
+                        draft.params.map((x, j) =>
+                          j === i ? { ...x, required: e.target.checked } : x,
+                        ),
+                      )
+                    }
+                  />
+                  Required
+                </label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Remove ${param.name || `detail ${i + 1}`}`}
+                  onClick={() =>
+                    editParams(draft.params.filter((_, j) => j !== i))
+                  }
+                >
+                  <X className="size-4" aria-hidden />
+                </Button>
+              </div>
+            ))}
+            <Button
+              variant="secondary"
+              size="sm"
+              className="w-fit"
+              onClick={() =>
+                editParams([
+                  ...draft.params,
+                  { name: "", description: "", required: true },
+                ])
+              }
+            >
+              <Plus className="size-3.5" aria-hidden /> Add detail
+            </Button>
+          </div>
+        </Panel>
+      )}
 
       {draft.type === "google_sheets" ? (
         <Panel title="Google Sheet">
@@ -616,7 +630,15 @@ function ToolForm({
                 )}
               </Field>
             </div>
-            {sheet.action === "append_row" ? (
+            {sheet.action === "append_row" && (
+              <Switch
+                label="Use the agent's details as columns"
+                description="One column per detail in the agent's “Details to write down”, plus Call time, Customer phone, Outcome and Summary. One row per call: the agent fills it during the call, the results complete it after."
+                checked={Boolean(sheet.agent_details)}
+                onChange={(agent_details) => setConfig({ agent_details })}
+              />
+            )}
+            {followsAgent ? null : sheet.action === "append_row" ? (
               <div className="flex flex-col gap-2">
                 <p className="text-[13px] font-medium">Columns to fill</p>
                 <p className="text-2xs text-muted">

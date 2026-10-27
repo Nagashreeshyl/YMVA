@@ -315,7 +315,7 @@ class CallSession:
         await self.recorder.event(
             CallEventType.TOOL_RESULT,
             "ok" if result.get("ok") else str(result.get("error", "failed")),
-            data={"tool": tool.name, "result": result},
+            data={"tool": tool.name, "result": result, "memory": dict(memory)},
         )
         await params.result_callback(result)
 

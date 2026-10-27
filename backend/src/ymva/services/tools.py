@@ -14,7 +14,7 @@ import asyncio
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
@@ -69,6 +69,9 @@ class SheetsConfig(BaseModel):
     columns: list[SheetColumn] = Field(default_factory=list, max_length=50)
     match_column: str = Field(default="", max_length=100)
     match_value: str = Field(default="", max_length=300)
+    # Columns (and what the agent fills in) come from the agent's "Details to write down",
+    # plus the call's time, phone, outcome and summary; see with_agent_details.
+    agent_details: bool = False
 
     @property
     def spreadsheet_id(self) -> str:
@@ -653,12 +656,42 @@ class LoadedTool:
         )
 
 
-async def load_tools(db: AsyncSession, names: list[str]) -> list[LoadedTool]:
-    """The agent's active tools; ones deleted or switched off since are skipped."""
+# Filled from the call itself, next to the agent's details (blank until known).
+CALL_COLUMNS = [
+    ("Call time", "{{call_time}}"),
+    ("Customer phone", "{{customer_phone}}"),
+    ("Outcome", "{{outcome}}"),
+    ("Summary", "{{summary}}"),
+]
+
+
+def with_agent_details(tool: LoadedTool, details: list[Any]) -> LoadedTool:
+    """A Sheets tool set to follow the agent: one column per detail the agent writes down, and
+    the agent fills those same details in. The agent's details are its source of truth."""
+    if tool.type != "google_sheets" or not tool.config.get("agent_details"):
+        return tool
+    from ymva.services.analysis import field_name  # analysis imports this module
+
+    fields = [(d, field_name(d.name)) for d in details]
+    fields = [(d, f) for d, f in fields if re.fullmatch(r"[a-z][a-z0-9_]{0,39}", f)]
+    columns = [{"header": d.name, "value": f"{{{{{f}}}}}"} for d, f in fields]
+    columns += [{"header": h, "value": v} for h, v in CALL_COLUMNS]
+    return replace(
+        tool,
+        config={**tool.config, "action": "append_row", "columns": columns},
+        params=[ToolParam(name=f, description=d.description, required=False) for d, f in fields],
+    )
+
+
+async def load_tools(
+    db: AsyncSession, names: list[str], details: list[Any] | None = None
+) -> list[LoadedTool]:
+    """The agent's active tools; ones deleted or switched off since are skipped. `details` are
+    the agent's "Details to write down", for Sheets tools that follow them."""
     if not names:
         return []
     rows = await db.scalars(select(Tool).where(Tool.name.in_(names), Tool.is_active))
-    return [
+    loaded = [
         LoadedTool(
             name=t.name,
             description=t.description,
@@ -669,3 +702,4 @@ async def load_tools(db: AsyncSession, names: list[str]) -> list[LoadedTool]:
         )
         for t in rows
     ]
+    return [with_agent_details(t, details or []) for t in loaded]

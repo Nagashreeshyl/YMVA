@@ -406,3 +406,33 @@ async def test_a_call_never_runs_the_same_tool_twice_with_the_same_details(
     await use("2026-11-25")  # a correction does run
     assert [r["promised_date"] for r in runs] == ["2026-11-20", "2026-11-25"]
     assert "wasn't run again" in answers[1]["note"]
+
+
+async def test_sheet_follows_the_agents_details_and_completes_one_row_per_call(
+    requests_seen: list[httpx.Request], sheets: FakeSheets
+) -> None:
+    from ymva.services.tools import LoadedTool, with_agent_details
+    from ymva.voice.config import TrackedItem
+
+    details = [
+        TrackedItem(name="Patient full name", description="Full name"),
+        TrackedItem(name="Preferred appointment date", description="As YYYY-MM-DD"),
+    ]
+    config = {**SHEET_TOOL["config"], "sheet": "Loans", "agent_details": True}
+    secrets = {"service_account": SERVICE_ACCOUNT}
+    tool = with_agent_details(
+        LoadedTool("save", "Save", "google_sheets", config, [], secrets), details
+    )
+    # The agent fills in exactly the agent's details.
+    assert [p.name for p in tool.params] == ["patient_full_name", "preferred_appointment_date"]
+
+    memory: dict[str, Any] = {}
+    during = {"patient_full_name": "Shreeshyl", "preferred_appointment_date": "2026-11-02"}
+    await tools_service.run_tool("google_sheets", tool.config, secrets, during, memory)
+    after = {**during, "outcome": "Appointment booked", "summary": "Booked for 2 Nov."}
+    await tools_service.run_tool("google_sheets", tool.config, secrets, after, memory)
+    assert sheets.tabs["Loans"] == [
+        ["Patient full name", "Preferred appointment date", "Call time", "Customer phone",
+         "Outcome", "Summary"],
+        ["Shreeshyl", "2026-11-02", "", "", "Appointment booked", "Booked for 2 Nov."],
+    ]  # fmt: skip

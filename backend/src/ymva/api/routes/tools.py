@@ -24,6 +24,7 @@ from ymva.services.tools import (
     RESERVED_NAMES,
     SECRET_TYPES,
     TOOL_NAME_RE,
+    LoadedTool,
     ToolError,
     ToolParam,
     call_facts,
@@ -31,6 +32,7 @@ from ymva.services.tools import (
     placeholders,
     run_tool,
     secret_hint,
+    with_agent_details,
 )
 from ymva.voice.config import AgentConfig, detected_variables
 
@@ -297,7 +299,18 @@ async def test_tool(
     tool = await _get(db, tool_id)
     now = datetime.now(ZoneInfo(get_settings().timezone))  # same clock as real calls
     values = call_facts(now, body.values.get("customer_phone")) | body.values
-    result = await run_tool(tool.type.value, tool.config, _secrets(tool), values)
+    config = tool.config
+    if config.get("agent_details"):  # columns come from the first agent that uses the tool
+        for agent in await db.scalars(select(Agent).order_by(Agent.created_at)):
+            _, agent_config = await _agent_config(db, agent.id)
+            if tool.name in agent_config.get("tools", []) + agent_config.get("analysis", {}).get(
+                "send_to", []
+            ):
+                details = AgentConfig.model_validate(agent_config).analysis.details
+                loaded = LoadedTool(tool.name, "", tool.type.value, config, [], None)
+                config = with_agent_details(loaded, details).config
+                break
+    result = await run_tool(tool.type.value, config, _secrets(tool), values)
     await audit.record(
         db,
         actor=admin,

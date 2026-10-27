@@ -38,7 +38,7 @@ async def load_setup(
             raise CallSetupError("The agent for this call no longer exists")
         config = AgentConfig.model_validate(call.agent_config or version.config)
         keys = await load_ai_keys(db)
-        tools = await load_tools(db, config.tools)
+        tools = await load_tools(db, config.tools, config.analysis.details)
     variables = string_variables(call.variables)
     if not greeting.has(call_id):
         greeting.prefetch(call_id, config, variables, keys, output_sample_rate)

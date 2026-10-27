@@ -258,6 +258,8 @@ export interface SheetsToolConfig {
   columns: SheetColumn[];
   match_column: string;
   match_value: string;
+  /** Columns follow each agent's "Details to write down" (plus call time, phone, outcome, summary). */
+  agent_details?: boolean;
 }
 
 export interface HttpToolConfig {

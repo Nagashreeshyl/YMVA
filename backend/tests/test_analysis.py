@@ -115,7 +115,9 @@ async def test_results_are_sent_to_after_call_tools(
 ) -> None:
     sent: list[dict[str, str]] = []
 
-    async def run_tool(kind: str, config: Any, secrets: Any, values: dict[str, str]) -> Any:
+    async def run_tool(
+        kind: str, config: Any, secrets: Any, values: dict[str, str], *_: Any
+    ) -> Any:
         sent.append(values)
         return {"ok": True}
 
