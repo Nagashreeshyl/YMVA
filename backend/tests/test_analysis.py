@@ -141,3 +141,26 @@ async def test_results_are_sent_to_after_call_tools(
     assert sent[0]["promised_payment_date"] == "2026-11-20"
     assert sent[0]["outcome"] == "Promised to pay" and sent[0]["customer_name"] == "Ramesh"
     assert sent[0]["paid_on"] == ""  # tracked details not given are still there, empty
+
+
+async def test_caller_who_asks_not_to_be_called_is_added_to_do_not_call(
+    admin_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ymva.models import DoNotCall
+
+    async def ask(api_key: str, system: str, contents: list[Any], schema: type) -> Any:
+        return schema.model_validate(
+            {"summary": "Asked not to be called.", "outcome": "Other", "do_not_call": True}
+        )
+
+    monkeypatch.setattr(analysis, "ask_gemini", ask)
+    await admin_client.put("/api/integrations/ai/google", json={"api_key": "AIza-google-12345678"})
+    call_id = await _call([(CallEventType.USER_TURN, "Don't call me again.")])
+    async with get_sessionmaker()() as db:
+        call = await db.get(Call, call_id)
+        assert call is not None
+        call.direction, call.to_number = CallDirection.OUTBOUND, "+919845077777"
+        await db.commit()
+    await analysis.analyze_call(call_id)
+    async with get_sessionmaker()() as db:
+        assert await db.get(DoNotCall, "+919845077777") is not None

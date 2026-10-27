@@ -52,7 +52,7 @@ export function DoNotCallSettings({ canEdit }: { canEdit: boolean }) {
       {canEdit && (
         <Panel
           title="Add numbers"
-          description="Customers who asked not to be called. Campaigns skip these numbers and “Call a phone” refuses them. Incoming calls from them are still answered."
+          description="Customers who asked not to be called. Callers who say so on a call are added automatically. Campaigns skip these numbers and “Call a phone” refuses them. Incoming calls from them are still answered."
         >
           <form
             className="flex flex-col gap-3"

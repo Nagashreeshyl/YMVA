@@ -10,11 +10,12 @@ from zoneinfo import ZoneInfo
 from google.genai import types
 from pydantic import BaseModel, Field, ValidationError, create_model
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 
 from ymva.config import get_settings
 from ymva.db import get_sessionmaker
 from ymva.logging import get_logger
-from ymva.models import Call, CallDirection, CallEvent, CallEventType
+from ymva.models import Call, CallDirection, CallEvent, CallEventType, DoNotCall
 from ymva.services.builder import ask_gemini
 from ymva.services.integrations import load_ai_keys
 from ymva.services.tools import call_facts, load_tools, run_tool
@@ -33,7 +34,9 @@ company in India) and a customer, and write down what happened.
 - outcome: the single option that fits best; "Other" only if none fits.
 - details: only details the customer actually said. Leave out anything not said; never guess.
   Write dates as YYYY-MM-DD, working out words like "tomorrow" or "the 20th" from the call
-  date. Keep each value short."""
+  date. Keep each value short.
+- do_not_call: true only if the customer clearly asked not to be called again (for example
+  "don't call me again", "stop calling me"). Being busy or asking for a later call is false."""
 
 # Calls still being analysed; holding them stops the tasks being garbage-collected.
 _running: set[asyncio.Task[None]] = set()
@@ -42,7 +45,11 @@ _running: set[asyncio.Task[None]] = set()
 def _result_model(analysis: Analysis) -> type[BaseModel]:
     # Built per agent so Gemini can only answer with that agent's own outcome and detail names.
     outcomes: Any = Literal[tuple(dict.fromkeys([o.name for o in analysis.outcomes] + [OTHER]))]
-    fields: dict[str, Any] = {"summary": (str, ...), "outcome": (outcomes, ...)}
+    fields: dict[str, Any] = {
+        "summary": (str, ...),
+        "outcome": (outcomes, ...),
+        "do_not_call": (bool, False),
+    }
     if analysis.details:
         names: Any = Literal[tuple(d.name for d in analysis.details)]
         detail: Any = create_model("Detail", name=(names, ...), value=(str, ...))
@@ -124,6 +131,13 @@ async def analyze_call(call_id: uuid.UUID) -> None:
         call.extracted = {
             d["name"]: d["value"].strip() for d in data.get("details", []) if d["value"].strip()
         }
+        phone = call.to_number if call.direction == CallDirection.OUTBOUND else call.from_number
+        if data["do_not_call"] and call.direction != CallDirection.WEB and phone:
+            await db.execute(
+                insert(DoNotCall)
+                .values(phone=phone, reason="Asked on a call not to be called again")
+                .on_conflict_do_nothing()
+            )
         await db.commit()
 
 
