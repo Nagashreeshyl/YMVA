@@ -51,6 +51,7 @@ from ymva.services.tools import LoadedTool, call_facts, run_tool
 from ymva.voice import greeting
 from ymva.voice.ambience import AmbienceMixer
 from ymva.voice.config import AgentConfig
+from ymva.voice.gate import NearFieldGate
 from ymva.voice.gemini_live import ResilientGeminiLive
 from ymva.voice.guard import LanguageGuard
 from ymva.voice.languages import LANGUAGES
@@ -464,6 +465,7 @@ class CallSession:
             pipeline = Pipeline(
                 [
                     self.transport.input(),
+                    NearFieldGate(),  # sounds around the caller stay out
                     pair.user(),
                     # Gemini sends what the caller said back upstream, so the guard must sit
                     # before the model to see it.
@@ -546,6 +548,7 @@ class CallSession:
         pipeline = Pipeline(
             [
                 self.transport.input(),
+                NearFieldGate(),  # sounds around the caller stay out
                 stt,
                 guard,
                 pair.user(),

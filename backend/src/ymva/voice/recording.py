@@ -1,4 +1,5 @@
-"""Writes a call's audio (caller and agent mixed) to a WAV file while the call runs."""
+"""Writes a call's audio to a stereo WAV file while the call runs: the caller on the left,
+the agent on the right, so what the caller's microphone picked up can be heard on its own."""
 
 import uuid
 import wave
@@ -37,7 +38,7 @@ class CallRecording:
         self.key = f"{call_id}.wav"
         self.processor = AudioBufferProcessor(
             sample_rate=RECORDING_SAMPLE_RATE,
-            num_channels=1,
+            num_channels=2,
             buffer_size=_CHUNK_BYTES,
             auto_start_recording=True,
         )
@@ -61,7 +62,7 @@ class CallRecording:
 
     @property
     def duration_seconds(self) -> float:
-        return self._bytes / (RECORDING_SAMPLE_RATE * 2)
+        return self._bytes / (RECORDING_SAMPLE_RATE * 2 * 2)  # 16-bit stereo
 
     def close(self) -> str | None:
         """Finish the WAV file; returns its key, or None when nothing was recorded."""
