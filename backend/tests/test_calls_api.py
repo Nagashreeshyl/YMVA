@@ -181,12 +181,12 @@ async def test_outbound_call_requires_published_agent(
     from ymva.config import get_settings
 
     settings = get_settings()
-    saved = settings.public_url
-    settings.public_url = "http://localhost"
+    saved = settings.public_url, settings.telephony_public_url
+    settings.public_url, settings.telephony_public_url = "http://localhost", ""
     try:
         local = await admin_client.post("/api/calls/outbound", json=body)
     finally:
-        settings.public_url = saved
+        settings.public_url, settings.telephony_public_url = saved
     assert local.status_code == 400 and "--tunnel" in local.json()["detail"]
 
 

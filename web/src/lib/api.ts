@@ -250,6 +250,8 @@ export interface SheetColumn {
 }
 
 export interface SheetsToolConfig {
+  /** Missing on tools saved before Apps Script existed: those use a service account. */
+  connection?: "service_account" | "apps_script";
   spreadsheet: string;
   sheet: string;
   action: "append_row" | "find_row";

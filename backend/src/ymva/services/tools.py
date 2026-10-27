@@ -1,5 +1,8 @@
 """Tools agents use mid-call: append or look up a Google Sheets row, or call an HTTP API.
 
+Google Sheets connects one of two ways: a service-account key (Sheets API), or an Apps Script
+web app the admin pastes into the sheet (no Google Cloud project or key needed).
+
 A tool's settings use {{name}} placeholders filled from what the agent collected (the tool's
 parameters), the call's customer details and a few call facts (call_date, call_time,
 customer_phone). Secrets (a service-account key, API headers) are stored encrypted and only
@@ -37,6 +40,7 @@ TOOL_TIMEOUT_SECS = 10.0
 # What the model sees from a tool's answer; long API responses only slow the reply down.
 MAX_RESULT_CHARS = 2000
 SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets"
+APPS_SCRIPT_URL_RE = r"^https://script\.google\.com/(macros|a/macros/[^/]+)/s/[A-Za-z0-9_-]+/exec$"
 
 
 class ToolError(Exception):
@@ -57,6 +61,7 @@ class SheetColumn(BaseModel):
 
 
 class SheetsConfig(BaseModel):
+    connection: Literal["service_account", "apps_script"] = "service_account"
     spreadsheet: str = Field(min_length=10, max_length=300)  # the sheet's link or ID
     # Tab name; empty means the tab in the link (#gid=...), else the first tab.
     sheet: str = Field(default="", max_length=100)
@@ -106,12 +111,14 @@ CONFIG_TYPES: dict[str, type[BaseModel]] = {
 
 
 class SheetsSecrets(BaseModel):
-    service_account: dict[str, Any]
+    service_account: dict[str, Any] | None = None
+    # The Apps Script web app's address; anyone holding it can write, so it's kept secret.
+    script_url: str | None = Field(default=None, pattern=APPS_SCRIPT_URL_RE, max_length=500)
 
     @field_validator("service_account")
     @classmethod
-    def _key(cls, v: dict[str, Any]) -> dict[str, Any]:
-        if (
+    def _key(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        if v is not None and (
             v.get("type") != "service_account"
             or not v.get("client_email")
             or not v.get("private_key")
@@ -142,7 +149,9 @@ def secret_hint(tool_type: str, secrets: dict[str, Any] | None) -> str | None:
     if not secrets:
         return None
     if tool_type == "google_sheets":
-        return str(secrets.get("service_account", {}).get("client_email", "")) or None
+        if secrets.get("script_url"):
+            return "Apps Script web app"
+        return str((secrets.get("service_account") or {}).get("client_email", "")) or None
     if tool_type == "database":
         url = urlsplit(str(secrets.get("connection", "")))
         return f"{url.hostname}{url.path}" if url.hostname else None
@@ -216,15 +225,68 @@ async def _tab(client: httpx.AsyncClient, config: SheetsConfig, email: str) -> s
     return str(by_gid[0] if by_gid else tabs[0]["title"])
 
 
+def _cell(value: str) -> str:
+    # A caller's words must stay text: a leading "=" would make Google run it as a formula.
+    return "'" + value if value.startswith("=") else value
+
+
+async def _run_apps_script(
+    config: SheetsConfig, secrets: dict[str, Any], values: dict[str, str]
+) -> dict[str, Any]:
+    if not secrets.get("script_url"):
+        raise ToolError(
+            "This tool has no Apps Script web app address yet. Follow the steps in the tool "
+            "to add the script to the sheet, then paste its web app URL."
+        )
+    columns = [
+        [c.header.strip(), _cell(render(c.value, values, missing=""))] for c in config.columns
+    ]
+    request = {
+        "spreadsheet_id": config.spreadsheet_id,
+        "gid": config.gid,
+        "sheet": config.sheet.strip(),
+        "action": config.action,
+        "columns": columns,
+        "match_column": config.match_column.strip(),
+        "match_value": render(config.match_value, values, missing="").strip(),
+    }
+    # Google answers a web app POST with a redirect to the result, which httpx follows as GET.
+    async with httpx.AsyncClient(
+        timeout=TOOL_TIMEOUT_SECS, follow_redirects=True, event_hooks=egress.EVENT_HOOKS
+    ) as client:
+        response = await client.post(str(secrets["script_url"]), json=request)
+    try:
+        data = response.json()
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        if response.status_code == 404:
+            raise ToolError("Google can't find this Apps Script web app. Check the URL.")
+        raise ToolError(
+            "The Apps Script didn't answer. Deploy it as a web app with 'Who has access: "
+            "Anyone', and paste the URL ending in /exec."
+        )
+    if not data.get("ok"):
+        raise ToolError(str(data.get("error") or "The Apps Script reported an error")[:300])
+    if config.action == "append_row":
+        return {"ok": True, "saved": {h: v for h, v in columns if v}}
+    if data.get("found"):
+        return {"ok": True, "found": True, "row": data.get("row", {})}
+    return {"ok": True, "found": False}
+
+
 async def _run_sheets(
     config: SheetsConfig, secrets: dict[str, Any], values: dict[str, str]
 ) -> dict[str, Any]:
+    if config.connection == "apps_script":
+        return await _run_apps_script(config, secrets, values)
     if not secrets.get("service_account"):
         raise ToolError(
             "This tool has no Google service account key yet. Paste the key in the tool and "
             "share the sheet with the key's email as an editor."
         )
     account = SheetsSecrets.model_validate(secrets).service_account
+    assert account is not None  # checked just above
     email = account["client_email"]
     token = await _sheets_token(account)
     base = f"{SHEETS_API}/{config.spreadsheet_id}/values"
@@ -237,7 +299,9 @@ async def _run_sheets(
             if first.is_error:
                 raise _sheets_error(first, email)
             sheet_headers = [h.strip() for h in (first.json().get("values") or [[]])[0]]
-            wanted = {c.header.strip(): render(c.value, values, missing="") for c in config.columns}
+            wanted = {
+                c.header.strip(): _cell(render(c.value, values, missing="")) for c in config.columns
+            }
             missing = [h for h in wanted if h not in sheet_headers]
             if missing:
                 # An empty sheet gets its title row; new columns are added after the last one.

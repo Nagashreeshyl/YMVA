@@ -280,3 +280,60 @@ async def test_mcp_tool_lists_and_calls_server_tools(monkeypatch: pytest.MonkeyP
     config["arg_types"] = found[0]["arg_types"]
     result = await tools_service.run_tool("mcp", config, {}, {"loan_id": "YM1", "months": "3"})
     assert result["ok"] and "YM1: 2450 due for 3 month(s)" in str(result["response"])
+
+
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx_Example-123/exec"
+
+
+async def test_sheet_tool_via_apps_script_needs_no_key(
+    admin_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    posted: list[dict[str, Any]] = []
+    answer: dict[str, Any] = {"ok": True}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Like Google: the POST runs the script, then redirects to its answer.
+        if request.url.host == "script.google.com":
+            posted.append(json.loads(request.content))
+            return httpx.Response(
+                302, headers={"Location": "https://script.googleusercontent.com/echo"}
+            )
+        assert request.method == "GET"
+        return httpx.Response(200, json=answer)
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        tools_service.httpx,
+        "AsyncClient",
+        lambda *a, **k: real(*a, transport=httpx.MockTransport(handler), **k),
+    )
+    config = {**SHEET_TOOL["config"], "connection": "apps_script"}
+    bad = await admin_client.post(
+        "/api/tools",
+        json={**SHEET_TOOL, "config": config, "secrets": {"script_url": "https://evil.example/x"}},
+    )
+    assert bad.status_code == 422 and "script.google.com" in bad.json()["detail"]
+    tool = (
+        await admin_client.post(
+            "/api/tools",
+            json={**SHEET_TOOL, "config": config, "secrets": {"script_url": SCRIPT_URL}},
+        )
+    ).json()
+    assert tool["secret_hint"] == "Apps Script web app" and "AKfyc" not in str(tool)
+
+    result = (
+        await admin_client.post(
+            f"/api/tools/{tool['id']}/test",
+            json={"values": {"promised_date": "=IMPORTXML(1)", "loan_id": "YM1"}},
+        )
+    ).json()
+    assert result == {"ok": True, "saved": {"Promised date": "'=IMPORTXML(1)", "Loan ID": "YM1"}}
+    assert posted[-1]["spreadsheet_id"] == "1AbCdEfGhIjK" and posted[-1]["gid"] == 0
+    # A caller's words never become a formula.
+    assert posted[-1]["columns"] == [["Promised date", "'=IMPORTXML(1)"], ["Loan ID", "YM1"]]
+
+    answer.update(ok=False, error="The sheet has no column named Loan")
+    result = await tools_service.run_tool("google_sheets", config, {"script_url": SCRIPT_URL}, {})
+    assert result == {"ok": False, "error": "The sheet has no column named Loan"}
+    result = await tools_service.run_tool("google_sheets", config, {}, {})
+    assert not result["ok"] and "web app address" in result["error"]

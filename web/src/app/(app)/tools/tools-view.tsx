@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
+import { CopyButton } from "@/components/copy";
 import { useConfirm } from "@/components/dialog";
 import {
   Badge,
@@ -41,6 +42,7 @@ import {
   type ToolType,
 } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
+import { SHEETS_APPS_SCRIPT } from "@/lib/sheets-apps-script";
 import { detectVariables } from "@/lib/variables";
 import { useMe } from "@/lib/session";
 
@@ -50,6 +52,7 @@ type Draft = Omit<
 >;
 
 const NEW_SHEET: SheetsToolConfig = {
+  connection: "apps_script",
   spreadsheet: "",
   sheet: "",
   action: "append_row",
@@ -145,6 +148,7 @@ function ToolForm({
   const agentDetails = agent.data ? detectVariables(agent.data.config) : [];
   // Only sent when typed: stored secrets are never shown again.
   const [keyJson, setKeyJson] = useState("");
+  const [scriptUrl, setScriptUrl] = useState("");
   const [connection, setConnection] = useState("");
   const [secretHeaders, setSecretHeaders] = useState<
     { name: string; value: string }[]
@@ -154,6 +158,9 @@ function ToolForm({
   const set = (change: Partial<Draft>) =>
     setDraft((d) => ({ ...d, ...change }));
   const sheet = draft.config as SheetsToolConfig;
+  const viaScript = sheet.connection === "apps_script";
+  // Stored secrets of the other kind don't count once the connection is switched.
+  const savedViaScript = saved?.secret_hint === "Apps Script web app";
   const http = draft.config as HttpToolConfig;
   const db = draft.config as DatabaseToolConfig;
   const mcp = draft.config as McpToolConfig;
@@ -177,7 +184,10 @@ function ToolForm({
   });
 
   const secrets = (): Record<string, unknown> | undefined => {
-    if (draft.type === "google_sheets" && keyJson.trim()) {
+    if (draft.type === "google_sheets" && viaScript && scriptUrl.trim()) {
+      return { script_url: scriptUrl.trim() };
+    }
+    if (draft.type === "google_sheets" && !viaScript && keyJson.trim()) {
       return { service_account: JSON.parse(keyJson) };
     }
     if (draft.type === "database" && connection.trim()) {
@@ -218,6 +228,7 @@ function ToolForm({
     onSuccess: (result) => {
       setSaved(result);
       setKeyJson("");
+      setScriptUrl("");
       setConnection("");
       setSecretHeaders([]);
       queryClient.invalidateQueries({ queryKey: ["tools"] });
@@ -555,6 +566,18 @@ function ToolForm({
       {draft.type === "google_sheets" ? (
         <Panel title="Google Sheet">
           <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <p className="text-[13px] font-medium">Connect with</p>
+              <Segmented
+                label="How YMVA connects to the sheet"
+                value={sheet.connection ?? "service_account"}
+                onChange={(connection) => setConfig({ connection })}
+                options={[
+                  { value: "apps_script", label: "Apps Script (no key)" },
+                  { value: "service_account", label: "Service account key" },
+                ]}
+              />
+            </div>
             <div className="grid gap-4 sm:grid-cols-[1fr_200px_200px]">
               <Field label="Sheet link">
                 {(p) => (
@@ -683,35 +706,106 @@ function ToolForm({
                 </Field>
               </div>
             )}
-            <Field
-              label={
-                saved?.has_secrets
-                  ? "Service account key · saved"
-                  : "Service account key"
-              }
-              hint={
-                saved?.secret_hint
-                  ? `Share the sheet with ${saved.secret_hint} as an editor. Paste a new key only to replace it.`
-                  : "Paste the JSON key of a Google Cloud service account (with the Sheets API enabled), then share the sheet with its email as an editor."
-              }
-            >
-              {(p) => (
-                <Textarea
-                  {...p}
-                  rows={3}
-                  className="min-h-0 font-mono text-[12px]"
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder={
-                    saved?.has_secrets
-                      ? "Stored. Paste to replace."
-                      : '{"type": "service_account", …}'
-                  }
-                  value={keyJson}
-                  onChange={(e) => setKeyJson(e.target.value)}
-                />
-              )}
-            </Field>
+            {viaScript ? (
+              <div className="flex flex-col gap-3 rounded-xl border border-line p-4">
+                <p className="text-[13px] font-medium">
+                  Set up the sheet (once, about 2 minutes)
+                </p>
+                <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-[13px] text-muted">
+                  <li>
+                    Open the Google Sheet, then{" "}
+                    <strong className="text-ink">
+                      Extensions → Apps Script
+                    </strong>
+                    .
+                  </li>
+                  <li>
+                    Delete what&apos;s in the editor, paste the script below and
+                    click <strong className="text-ink">Save</strong>.
+                  </li>
+                  <li>
+                    Click{" "}
+                    <strong className="text-ink">
+                      Deploy → New deployment
+                    </strong>
+                    , pick type <strong className="text-ink">Web app</strong>.
+                    Set Execute as <strong className="text-ink">Me</strong> and
+                    Who has access <strong className="text-ink">Anyone</strong>,
+                    then <strong className="text-ink">Deploy</strong> and allow
+                    access when Google asks.
+                  </li>
+                  <li>
+                    Copy the <strong className="text-ink">Web app URL</strong>{" "}
+                    (it ends in /exec) and paste it below. Put the sheet&apos;s
+                    own link in Sheet link above too.
+                  </li>
+                </ol>
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-2xs font-medium text-muted">
+                      Apps Script
+                    </span>
+                    <CopyButton value={SHEETS_APPS_SCRIPT} />
+                  </div>
+                  <pre
+                    tabIndex={0}
+                    aria-label="Apps Script to paste into the sheet"
+                    className="max-h-48 overflow-auto rounded-lg bg-surface p-3 font-mono text-[11px] leading-relaxed"
+                  >
+                    {SHEETS_APPS_SCRIPT}
+                  </pre>
+                </div>
+                <Field
+                  label={savedViaScript ? "Web app URL · saved" : "Web app URL"}
+                  hint="Kept secret and encrypted: anyone with this URL can write to the sheet. If you change the script later, deploy again and paste the new URL."
+                >
+                  {(p) => (
+                    <Input
+                      {...p}
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder={
+                        savedViaScript
+                          ? "Stored. Paste to replace."
+                          : "https://script.google.com/macros/s/…/exec"
+                      }
+                      value={scriptUrl}
+                      onChange={(e) => setScriptUrl(e.target.value)}
+                    />
+                  )}
+                </Field>
+              </div>
+            ) : (
+              <Field
+                label={
+                  saved?.has_secrets && !savedViaScript
+                    ? "Service account key · saved"
+                    : "Service account key"
+                }
+                hint={
+                  saved?.secret_hint && !savedViaScript
+                    ? `Share the sheet with ${saved.secret_hint} as an editor. Paste a new key only to replace it.`
+                    : "Paste the JSON key of a Google Cloud service account (with the Sheets API enabled), then share the sheet with its email as an editor."
+                }
+              >
+                {(p) => (
+                  <Textarea
+                    {...p}
+                    rows={3}
+                    className="min-h-0 font-mono text-[12px]"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder={
+                      saved?.has_secrets && !savedViaScript
+                        ? "Stored. Paste to replace."
+                        : '{"type": "service_account", …}'
+                    }
+                    value={keyJson}
+                    onChange={(e) => setKeyJson(e.target.value)}
+                  />
+                )}
+              </Field>
+            )}
           </div>
         </Panel>
       ) : draft.type === "mcp" ? (

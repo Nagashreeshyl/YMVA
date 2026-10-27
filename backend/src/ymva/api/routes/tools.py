@@ -133,6 +133,7 @@ FIELD_LABELS = {
     "match_column": "Column to search",
     "url": "URL",
     "service_account": "Service account key",
+    "script_url": "Apps Script web app URL",
     "query": "SQL query",
     "connection": "Database connection",
 }
@@ -141,6 +142,10 @@ PLAIN_ERRORS = {
     ("url", "string_pattern_mismatch"): "The URL must start with https:// or http://",
     ("header", "string_too_short"): "Every column needs a title",
     ("connection", "string_pattern_mismatch"): "The connection must start with postgresql://",
+    ("script_url", "string_pattern_mismatch"): (
+        "Paste the web app URL from Deploy, the one starting https://script.google.com/ "
+        "and ending in /exec"
+    ),
 }
 
 
