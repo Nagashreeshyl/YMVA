@@ -11,11 +11,12 @@ from google.genai import types
 from pydantic import BaseModel, Field, ValidationError, create_model
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ymva.config import get_settings
 from ymva.db import get_sessionmaker
 from ymva.logging import get_logger
-from ymva.models import Call, CallDirection, CallEvent, CallEventType, DoNotCall
+from ymva.models import AgentVersion, Call, CallDirection, CallEvent, CallEventType, DoNotCall
 from ymva.services.builder import ask_gemini
 from ymva.services.integrations import load_ai_keys
 from ymva.services.tools import call_facts, load_tools, run_tool
@@ -80,6 +81,19 @@ def _prompt(call: Call, analysis: Analysis, transcript: list[str]) -> str:
     return "\n".join(lines)
 
 
+async def _analysis(db: AsyncSession, call: Call) -> Analysis:
+    """The after-call settings the call ran with. Phone calls made before calls kept their own
+    copy of the settings fall back to the agent version they used."""
+    raw = call.agent_config
+    if raw is None and call.agent_version_id is not None:
+        version = await db.get(AgentVersion, call.agent_version_id)
+        raw = version.config if version else None
+    try:
+        return AgentConfig.model_validate(raw or {}).analysis
+    except ValidationError:
+        return Analysis()  # calls made before analysis existed
+
+
 async def analyze_call(call_id: uuid.UUID) -> None:
     async with get_sessionmaker()() as db:
         call = await db.get(Call, call_id)
@@ -103,10 +117,7 @@ async def analyze_call(call_id: uuid.UUID) -> None:
             call.extracted = {}
             await db.commit()
             return
-        try:
-            analysis = AgentConfig.model_validate(call.agent_config).analysis
-        except ValidationError:
-            analysis = Analysis()  # calls made before analysis existed
+        analysis = await _analysis(db, call)
         keys = await load_ai_keys(db)
         if "google" not in keys:
             return
@@ -175,10 +186,7 @@ async def send_results(call_id: uuid.UUID) -> None:
         call = await db.get(Call, call_id)
         if call is None or call.outcome is None:
             return
-        try:
-            analysis = AgentConfig.model_validate(call.agent_config).analysis
-        except ValidationError:
-            return
+        analysis = await _analysis(db, call)
         tools = await load_tools(db, analysis.send_to, analysis.details)
         values = result_values(call, analysis)
         seq = await db.scalar(select(func.max(CallEvent.seq)).where(CallEvent.call_id == call_id))

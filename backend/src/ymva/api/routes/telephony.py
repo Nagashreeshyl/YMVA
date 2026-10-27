@@ -138,6 +138,7 @@ async def answer(
             agent_id=agent.id,
             agent_name=agent.name,
             agent_version_id=version.id,
+            agent_config=inbound_config.model_dump(mode="json"),
             direction=CallDirection.INBOUND,
             status=CallStatus.RINGING,
             provider_account_id=account.id,

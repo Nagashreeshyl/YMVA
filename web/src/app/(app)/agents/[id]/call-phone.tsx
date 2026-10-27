@@ -13,6 +13,8 @@ export function CallPhone({ agent }: { agent: AgentDetail }) {
   const numbers = useQuery({ queryKey: ["numbers"], queryFn: () => api<PhoneNumber[]>("/numbers") });
   const details = callDetails(agent.config);
   const [values, setValues] = useState<Record<string, string>>(() => rememberedValues(agent.id));
+  // Like the browser test: unpublished edits can be tried on a real phone before publishing.
+  const [useEdits, setUseEdits] = useState(agent.has_unpublished_changes);
   const place = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
       api<CallSummary>("/calls/outbound", { method: "POST", json: body }),
@@ -46,7 +48,7 @@ export function CallPhone({ agent }: { agent: AgentDetail }) {
   return (
     <Panel
       title="Call a phone"
-      description={`Places a real call with the published version (v${agent.published_version}). Only call people who expect it.`}
+      description="Places a real call. Only call people who expect it."
     >
       <form
         className="grid max-w-3xl gap-4 sm:grid-cols-2"
@@ -59,9 +61,33 @@ export function CallPhone({ agent }: { agent: AgentDetail }) {
             from_number_id: f.get("from"),
             to: f.get("to"),
             variables: Object.fromEntries(details.map((n) => [n, values[n] ?? ""])),
+            use_edits: useEdits,
           });
         }}
       >
+        {agent.has_unpublished_changes && (
+          <div className="sm:col-span-2">
+            <Field
+              label="Call with"
+              hint={
+                useEdits
+                  ? "Your unpublished edits, so you can try them before publishing. Campaigns and incoming calls still use the published version."
+                  : `The published version (v${agent.published_version}), as campaigns and incoming calls use. Your unpublished edits are not included.`
+              }
+            >
+              {(p) => (
+                <Select
+                  {...p}
+                  value={useEdits ? "edits" : "published"}
+                  onChange={(e) => setUseEdits(e.target.value === "edits")}
+                >
+                  <option value="edits">Current edits (not yet published)</option>
+                  <option value="published">Published version (v{agent.published_version})</option>
+                </Select>
+              )}
+            </Field>
+          </div>
+        )}
         <Field label="Call from">
           {(p) => (
             <Select {...p} name="from" required>

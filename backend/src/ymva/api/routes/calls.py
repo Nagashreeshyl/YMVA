@@ -98,6 +98,8 @@ class OutboundIn(BaseModel):
     from_number_id: uuid.UUID
     to: str
     variables: dict[str, str] = Field(default_factory=dict)
+    # Call with the agent's unpublished edits instead of the published version (testing).
+    use_edits: bool = False
 
     _normalise = field_validator("to")(normalise_e164)
 
@@ -233,7 +235,9 @@ async def place_outbound(
     if agent is None or number is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent or number not found")
     try:
-        call = await start_outbound_call(db, agent, number, body.to, body.variables)
+        call = await start_outbound_call(
+            db, agent, number, body.to, body.variables, use_edits=body.use_edits
+        )
     except CallSetupError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     except TelephonyError as exc:

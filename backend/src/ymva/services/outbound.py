@@ -3,6 +3,7 @@
 from typing import Any
 from urllib.parse import urlsplit
 
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ymva.models import (
@@ -26,12 +27,19 @@ from ymva.services.drain import is_draining
 from ymva.services.integrations import load_ai_keys, telephony_client, webhook_urls
 from ymva.telephony import TelephonyError
 from ymva.voice import greeting
+from ymva.voice.config import AgentConfig
 
 PHONE_SAMPLE_RATE = 16000
 
 
 async def start_outbound_call(
-    db: AsyncSession, agent: Agent, number: PhoneNumber, to: str, variables: dict[str, Any]
+    db: AsyncSession,
+    agent: Agent,
+    number: PhoneNumber,
+    to: str,
+    variables: dict[str, Any],
+    *,
+    use_edits: bool = False,
 ) -> Call:
     """Create the call and ask the provider to dial. Raises CallSetupError when the call can't
     start (no published version, lines busy, number off) and TelephonyError when the provider
@@ -49,7 +57,15 @@ async def start_outbound_call(
             f"{account.provider.value.title()} can't reach this computer's address (localhost). "
             "Restart with ./ymva start --tunnel, or set a public domain."
         )
-    version, config = await runnable_version(db, agent)
+    version, config = await runnable_version(db, agent, draft=use_edits)
+    if use_edits and agent.draft_config is not None:  # "Call a phone" testing unpublished edits
+        try:
+            config = AgentConfig.model_validate(agent.draft_config)
+        except ValidationError as exc:
+            raise CallSetupError(
+                "Your current edits aren't complete yet. Fix them or call with the published "
+                "version."
+            ) from exc
     await check_capacity(db)
 
     call = Call(
@@ -63,6 +79,8 @@ async def start_outbound_call(
         from_number=number.e164,
         to_number=to,
         variables=string_variables(variables),
+        # The settings this call runs with, read again by the after-call results.
+        agent_config=config.model_dump(mode="json"),
     )
     db.add(call)
     await db.flush()

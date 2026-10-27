@@ -394,3 +394,32 @@ async def test_repeated_inbound_answer_webhook_reuses_the_call(
     assert "<Stream" in again.text
     calls = (await admin_client.get("/api/calls")).json()
     assert calls["total"] == 1
+
+
+async def test_phone_calls_keep_the_settings_they_ran_with(
+    admin_client: httpx.AsyncClient, _no_network: list[dict[str, Any]]
+) -> None:
+    from ymva.db import get_sessionmaker
+    from ymva.models import Call
+    from ymva.services.analysis import _analysis
+
+    data = await _setup(admin_client)
+    aid = data["agent"]["id"]
+    draft = data["agent"]["config"]
+    draft["analysis"]["details"] = [{"name": "Appointment date", "description": "YYYY-MM-DD"}]
+    await admin_client.put(f"/api/agents/{aid}/draft", json={"config": draft})
+    body = {"agent_id": aid, "from_number_id": data["number"]["id"], "to": "98765 43210"}
+
+    published = (await admin_client.post("/api/calls/outbound", json=body)).json()
+    edits = (
+        await admin_client.post("/api/calls/outbound", json={**body, "use_edits": True})
+    ).json()
+    async with get_sessionmaker()() as db:
+        live = await db.get(Call, uuid.UUID(published["id"]))
+        tried = await db.get(Call, uuid.UUID(edits["id"]))
+        assert live is not None and tried is not None
+        assert [d.name for d in (await _analysis(db, tried)).details] == ["Appointment date"]
+        assert "Appointment date" not in [d.name for d in (await _analysis(db, live)).details]
+        # Calls from before settings were kept on the call fall back to their version.
+        live.agent_config = None
+        assert (await _analysis(db, live)).details  # not empty defaults from nowhere
