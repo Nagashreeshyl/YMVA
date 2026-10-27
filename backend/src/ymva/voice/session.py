@@ -51,7 +51,6 @@ from ymva.services.tools import LoadedTool, call_facts, run_tool
 from ymva.voice import greeting
 from ymva.voice.ambience import AmbienceMixer
 from ymva.voice.config import AgentConfig
-from ymva.voice.gate import NearFieldGate
 from ymva.voice.gemini_live import ResilientGeminiLive
 from ymva.voice.guard import LanguageGuard
 from ymva.voice.languages import LANGUAGES
@@ -61,7 +60,7 @@ from ymva.voice.recorder import CallRecorder, ErrorReporter, MetricsObserver
 from ymva.voice.recording import CallRecording
 from ymva.voice.sarvam_voice import SarvamVoice
 from ymva.voice.trim import LeadingSilenceTrimmer
-from ymva.voice.turns import turn_stop_strategy
+from ymva.voice.turns import GuardedSpeechStart, turn_stop_strategy
 
 log = get_logger(__name__)
 
@@ -414,7 +413,9 @@ class CallSession:
         user_params = LLMUserAggregatorParams(
             vad_analyzer=vad,
             user_idle_timeout=config.limits.silence_timeout_seconds,
-            user_turn_strategies=UserTurnStrategies(stop=[turn_end]),
+            # Only detected speech starts a turn. Pipecat would also start one on any transcript,
+            # and Gemini Live transcribes background voices too: that cut the agent off.
+            user_turn_strategies=UserTurnStrategies(start=[GuardedSpeechStart()], stop=[turn_end]),
         )
 
         if config.mode == "gemini_live":
@@ -465,7 +466,6 @@ class CallSession:
             pipeline = Pipeline(
                 [
                     self.transport.input(),
-                    NearFieldGate(),  # sounds around the caller stay out
                     pair.user(),
                     # Gemini sends what the caller said back upstream, so the guard must sit
                     # before the model to see it.
@@ -548,7 +548,6 @@ class CallSession:
         pipeline = Pipeline(
             [
                 self.transport.input(),
-                NearFieldGate(),  # sounds around the caller stay out
                 stt,
                 guard,
                 pair.user(),
