@@ -146,3 +146,15 @@ async def test_undo_refused_after_manual_edit(
         f"/api/agents/{agent['id']}/assistant/{turn['messages'][1]['id']}/undo"
     )
     assert resp.status_code == 409
+
+
+def test_assistant_can_change_after_call_outcomes_and_details() -> None:
+    from ymva.services.builder import TrackedSpec
+
+    spec = _spec(
+        outcomes=[TrackedSpec(name="Appointment booked", description="Agreed a slot")],
+        details=[TrackedSpec(name="Appointment date", description="As YYYY-MM-DD")],
+    )
+    config = from_spec(spec, interest_reminder())
+    assert [o.name for o in config.analysis.outcomes] == ["Appointment booked"]
+    assert [d.name for d in config.analysis.details] == ["Appointment date"]

@@ -21,6 +21,7 @@ from ymva.voice.config import (
     SARVAM_VOICES,
     AgentConfig,
     Announcement,
+    TrackedItem,
     Variable,
 )
 from ymva.voice.languages import LANGUAGES
@@ -53,6 +54,11 @@ class VariableSpec(BaseModel):
     example: str = ""
 
 
+class TrackedSpec(BaseModel):
+    name: str = Field(description="Short label, e.g. 'Appointment booked'")
+    description: str = Field(description="When it applies / what to write down, one line")
+
+
 class AgentSpec(BaseModel):
     """The parts of an agent the builder writes."""
 
@@ -73,6 +79,12 @@ class AgentSpec(BaseModel):
     silence_timeout_seconds: int
     office_background: bool
     typing_during_tools: bool
+    outcomes: list[TrackedSpec] = Field(
+        description="After the call: the possible results; each call gets exactly one"
+    )
+    details: list[TrackedSpec] = Field(
+        description="After the call: facts to write down when the customer says them"
+    )
 
 
 class AssistantResult(BaseModel):
@@ -124,6 +136,14 @@ How to write system_prompt (plain text, second person, like the example below):
    the loan with the customer themselves, never ask for OTPs, PINs, card numbers or passwords.
 Keep it focused: under about 400 words.
 
+After the call, the transcript is read and saved with one outcome and some details. Write both
+for this agent's own purpose, never copied from another kind of call (a hospital appointment
+agent gets outcomes like "Appointment booked", "Rescheduled", "Cancelled", "Wrong person",
+"Call back later" and details like "Appointment date", "Doctor"; a payment reminder gets
+"Promised to pay", "Already paid"...). 3 to 8 outcomes, each a short label with a one-line
+"when it applies"; "Other" is added automatically, so don't list it. 0 to 8 details, each a
+short label with what to write; ask for dates as YYYY-MM-DD and times as HH:MM.
+
 Greetings: one per agent language, natural and short (introduce the agent and confirm who
 they're speaking to). For "everyday_mix", write them the way people actually talk: the
 Indian-language words in their own script, everyday English words (loan, interest, payment,
@@ -171,6 +191,10 @@ agent or asks questions about it.
   null and "changes" to [] (ask one short clarifying question if needed).
 - Keep "reply" to one to three short sentences, friendly and plain. No markdown, field
   names, language codes or {{placeholders}} (say "the customer", "the due date").
+- Outcomes and details are the editor's "After the call" section ("Outcomes", "Details to
+  write down"). When the admin asks about after-call results, outcomes, details, or what gets
+  saved or written down, change those lists, not the instructions. Name such changes like
+  "Outcome added: Appointment booked", "Detail removed: Paid on".
 - If you add a {{variable}}, add it to variables too; if you stop using one, remove it.
 - The admin's edits are saved as a draft; they still test and publish themselves."""
 
@@ -194,7 +218,13 @@ def to_spec(config: AgentConfig, name: str, description: str) -> AgentSpec:
         silence_timeout_seconds=config.limits.silence_timeout_seconds,
         office_background=config.atmosphere.room_tone,
         typing_during_tools=config.atmosphere.typing_while_thinking,
+        outcomes=[TrackedSpec(**o.model_dump()) for o in config.analysis.outcomes],
+        details=[TrackedSpec(**d.model_dump()) for d in config.analysis.details],
     )
+
+
+def _tracked(item: TrackedSpec) -> TrackedItem:
+    return TrackedItem(name=item.name.strip()[:60], description=item.description.strip()[:300])
 
 
 def from_spec(spec: AgentSpec, base: AgentConfig) -> AgentConfig:
@@ -230,6 +260,8 @@ def from_spec(spec: AgentSpec, base: AgentConfig) -> AgentConfig:
     }
     data["atmosphere"]["room_tone"] = spec.office_background
     data["atmosphere"]["typing_while_thinking"] = spec.typing_during_tools
+    data["analysis"]["outcomes"] = [_tracked(o).model_dump() for o in spec.outcomes]
+    data["analysis"]["details"] = [_tracked(d).model_dump() for d in spec.details]
     return AgentConfig.model_validate(data)
 
 
