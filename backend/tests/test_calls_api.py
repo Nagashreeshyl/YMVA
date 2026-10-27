@@ -177,6 +177,18 @@ async def test_outbound_call_requires_published_agent(
     detail = (await admin_client.get(f"/api/calls/{call['id']}")).json()
     assert detail["variables"] == {"customer_name": "Ramesh", "due_amount": "2450"}
 
+    # Without a public address the provider can't reach us: say so plainly.
+    from ymva.config import get_settings
+
+    settings = get_settings()
+    saved = settings.public_url
+    settings.public_url = "http://localhost"
+    try:
+        local = await admin_client.post("/api/calls/outbound", json=body)
+    finally:
+        settings.public_url = saved
+    assert local.status_code == 400 and "--tunnel" in local.json()["detail"]
+
 
 async def test_answer_webhook_streams_audio_with_single_use_token(
     admin_client: httpx.AsyncClient,

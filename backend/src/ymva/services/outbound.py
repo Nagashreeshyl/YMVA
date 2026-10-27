@@ -1,6 +1,7 @@
 """Placing an outbound phone call: used by "Call a phone" and by the campaign dialer."""
 
 from typing import Any
+from urllib.parse import urlsplit
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +13,7 @@ from ymva.models import (
     DoNotCall,
     PhoneNumber,
     ProviderAccount,
+    TelephonyProvider,
 )
 from ymva.services.calls import (
     CallSetupError,
@@ -41,6 +43,12 @@ async def start_outbound_call(
     account = await db.get(ProviderAccount, number.provider_account_id)
     if account is None or not account.is_active or not number.is_active:
         raise CallSetupError("This number or its account is turned off")
+    host = urlsplit(webhook_urls(account)["answer_url"]).hostname or ""
+    if account.provider != TelephonyProvider.SIMULATOR and host in ("localhost", "127.0.0.1"):
+        raise CallSetupError(
+            f"{account.provider.value.title()} can't reach this computer's address (localhost). "
+            "Restart with ./ymva start --tunnel, or set a public domain."
+        )
     version, config = await runnable_version(db, agent)
     await check_capacity(db)
 
