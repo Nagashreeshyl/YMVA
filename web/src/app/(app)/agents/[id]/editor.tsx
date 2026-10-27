@@ -594,7 +594,7 @@ export function AgentEditor({
         <div className="flex max-w-xl flex-col gap-4">
           <Switch
             label="Office background"
-            description="A quiet office room tone under the whole call. Off by default; turn on for a busier call-centre feel."
+            description="A real call-centre murmur under the whole call, so it sounds like the agent is in an office."
             checked={draft.atmosphere.room_tone}
             onChange={(on) => update((d) => void (d.atmosphere.room_tone = on))}
           />

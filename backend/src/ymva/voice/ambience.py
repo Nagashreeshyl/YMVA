@@ -1,39 +1,36 @@
-"""Call atmosphere: soft room tone under the whole call, and faint keyboard typing while the
-agent is using a tool (looking up or saving details), so a pause sounds like someone working.
+"""Call atmosphere: a real call-centre murmur under the whole call, and faint keyboard typing
+while the agent is using a tool (looking up or saving details), so a pause sounds like someone
+working.
 
-Both sounds are generated (no audio files), mixed only into the agent's outgoing audio, and
-kept far below speech level.
+Both are mixed only into the agent's outgoing audio, well below speech level. The office sound
+is a recording ("Office ambience - call center 3" by leonelmail on Freesound, CC0), trimmed to
+the stretches without laughs or close voices and made into a seamless loop (sounds/office.wav).
 """
 
+import wave
 from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
+import soxr  # type: ignore[import-untyped]
 from pipecat.audio.mixers.base_audio_mixer import BaseAudioMixer
 from pipecat.frames.frames import MixerControlFrame, MixerEnableFrame, MixerUpdateSettingsFrame
 
-_LOOP_SECONDS = 12
-_ROOM_TONE_RMS = 90.0  # int16 units at volume 1.0 (about -51 dBFS): present, never in the way
+_OFFICE_WAV = Path(__file__).parent / "sounds" / "office.wav"
+_OFFICE_RMS = 400.0  # int16 units at volume 1.0 (about -38 dBFS): heard, but under the voice
 _KEY_PEAK = 450.0  # int16 peak of one keystroke at volume 1.0 (faint, well under speech)
 TYPING_DELAY_SECS = 0.3
 
 
 @lru_cache(maxsize=4)
 def _room_tone(sample_rate: int) -> np.ndarray:
-    """Pink noise band-limited to ~150-3400 Hz, like a quiet office heard through a phone.
-
-    Shaped in the frequency domain, so it is fast to make and loops seamlessly.
-    """
-    n = sample_rate * _LOOP_SECONDS
-    spectrum = np.fft.rfft(np.random.default_rng(7).standard_normal(n))
-    freqs = np.fft.rfftfreq(n, 1 / sample_rate)
-    shape = np.zeros_like(freqs)
-    nonzero = freqs > 0
-    shape[nonzero] = 1 / np.sqrt(freqs[nonzero])  # pink: equal energy per octave
-    shape *= np.clip((freqs - 100) / 100, 0, 1)  # fade in above ~150 Hz
-    shape *= np.clip((4000 - freqs) / 600, 0, 1)  # fade out above ~3.4 kHz
-    out = np.fft.irfft(spectrum * shape, n)
-    out *= _ROOM_TONE_RMS / (np.sqrt(np.mean(out**2)) or 1)
-    return out.astype(np.float32)
+    """The office recording at the call's sample rate and level; made once, shared by calls."""
+    with wave.open(str(_OFFICE_WAV)) as w:
+        rate = w.getframerate()
+        audio = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32)
+    if rate != sample_rate:
+        audio = soxr.resample(audio, rate, sample_rate).astype(np.float32)
+    return audio * np.float32(_OFFICE_RMS / (np.sqrt(np.mean(audio**2)) or 1))
 
 
 def _keystroke(sample_rate: int, rng: np.random.Generator) -> np.ndarray:

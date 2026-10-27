@@ -124,8 +124,8 @@ class GeminiLiveSettings(BaseModel):
 class Atmosphere(BaseModel):
     """Sounds mixed under the agent's voice, only where they make the call feel more human."""
 
-    # Constant office background. Off by default: on a quiet line it sounds unexplained.
-    room_tone: bool = False
+    # A real call-centre murmur under the whole call.
+    room_tone: bool = True
     # Faint typing only while the agent is using a tool (looking something up, saving).
     typing_while_thinking: bool = True
     volume: float = Field(default=0.6, ge=0.0, le=1.0)
