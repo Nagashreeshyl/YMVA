@@ -49,6 +49,10 @@ class Settings(BaseSettings):
 
     timezone: str = "Asia/Kolkata"
     cors_origins: list[str] = Field(default_factory=list)
+    # Prometheus sends this as a bearer token to read /api/metrics; empty turns metrics off.
+    metrics_token: SecretStr = SecretStr("")
+    # Tools may reach private-network addresses (an in-house CRM). Off: only the internet.
+    egress_allow_private: bool = False
 
     @model_validator(mode="after")
     def _check_production(self) -> "Settings":

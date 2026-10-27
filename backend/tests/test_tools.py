@@ -34,13 +34,19 @@ def requests_seen(monkeypatch: pytest.MonkeyPatch, sheets: FakeSheets) -> list[h
     real = httpx.AsyncClient
 
     def client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
-        return real(*args, transport=httpx.MockTransport(handler), **kwargs)
+        return real(*args, **{**kwargs, "transport": httpx.MockTransport(handler)})
 
     async def token(_: dict[str, Any]) -> str:
         return "fake-token"
 
+    real_safe_ip = tools_service.egress.safe_ip
+
+    async def safe_ip(host: str) -> str:  # the made-up example.com hosts don't resolve
+        return "93.184.215.14" if host.endswith("example.com") else await real_safe_ip(host)
+
     monkeypatch.setattr(tools_service.httpx, "AsyncClient", client)
     monkeypatch.setattr(tools_service, "_sheets_token", token)
+    monkeypatch.setattr(tools_service.egress, "safe_ip", safe_ip)
     return seen
 
 
@@ -216,8 +222,17 @@ async def test_missing_sheet_link_is_explained_and_agent_gets_tool(
     assert agent["config"]["tools"] == ["save_promise"] and agent["has_draft_changes"]
 
 
-async def test_database_tool_binds_values_and_respects_read_only() -> None:
+async def test_database_tool_binds_values_and_respects_read_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import os
+
+    from ymva.services import egress
+
+    async def local(host: str) -> str:  # the test database runs on this machine
+        return host
+
+    monkeypatch.setattr(egress, "safe_ip", local)
 
     import asyncpg
 
@@ -306,7 +321,7 @@ async def test_sheet_tool_via_apps_script_needs_no_key(
     monkeypatch.setattr(
         tools_service.httpx,
         "AsyncClient",
-        lambda *a, **k: real(*a, transport=httpx.MockTransport(handler), **k),
+        lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(handler)}),
     )
     config = {**SHEET_TOOL["config"], "connection": "apps_script"}
     bad = await admin_client.post(

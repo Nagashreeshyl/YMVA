@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from ymva import __version__
+from ymva.api.deps import is_api_key_header
 from ymva.api.routes import (
     agents,
     audit_logs,
@@ -64,7 +65,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 def _origin_allowed(request: Request) -> bool:
     """CSRF guard: browser requests that change state must come from our own origin."""
     origin = request.headers.get("origin")
-    if origin is None or request.headers.get("authorization"):
+    # API-key requests carry no cookie, so they can't be forged from a browser. Any other
+    # Authorization header proves nothing: the cookie would still be used, so check the origin.
+    if origin is None or is_api_key_header(request.headers.get("authorization", "")):
         return True
     settings = get_settings()
     allowed = {settings.public_url, *settings.cors_origins}

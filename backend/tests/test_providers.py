@@ -45,7 +45,7 @@ def api(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Request]:
         monkeypatch.setattr(
             module.httpx,
             "AsyncClient",
-            lambda *a, **k: real(*a, transport=httpx.MockTransport(handler), **k),
+            lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(handler)}),
         )
     return seen
 
@@ -155,7 +155,7 @@ async def test_provider_errors_are_readable(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(
         twilio_family.httpx,
         "AsyncClient",
-        lambda *a, **k: real(*a, transport=httpx.MockTransport(lambda _: reply), **k),
+        lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(lambda _: reply)}),
     )
     with pytest.raises(TelephonyError, match="not a valid phone number"):
         await _place(TwilioClient({"account_sid": "AC1", "auth_token": "t"}))

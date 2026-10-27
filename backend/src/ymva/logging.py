@@ -13,13 +13,26 @@ from ymva.config import get_settings
 
 # Phone numbers: 10-13 digits, optional leading "+", not part of a longer token.
 _PHONE_RE = re.compile(r"(?<![\w+])\+?\d{10,13}(?!\w)")
+# Telephony webhook addresses carry a secret (/api/telephony/plivo/<account>/<secret>/answer)
+# and media streams a one-time token (/api/telephony/plivo/ws/<token>).
+_WEBHOOK_SECRET_RE = re.compile(r"(/api/telephony/[^/\s]+/[^/\s]+/)[^/\s?\"']+")
 _SENSITIVE_KEYS = {"password", "token", "secret", "api_key", "auth_token", "authorization"}
 
 
 def _mask_value(value: Any) -> Any:
     if isinstance(value, str):
+        value = _WEBHOOK_SECRET_RE.sub(r"\1***", value)
         return _PHONE_RE.sub(lambda m: "***" + m.group()[-4:], value)
     return value
+
+
+class _MaskFilter(logging.Filter):
+    """Same masking for standard-library loggers (uvicorn logs websocket paths)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = _mask_value(record.getMessage())
+        record.args = None
+        return True
 
 
 def _redact(_: Any, __: str, event_dict: MutableMapping[str, Any]) -> MutableMapping[str, Any]:
@@ -53,6 +66,8 @@ def configure_logging() -> None:
         cache_logger_on_first_use=True,
     )
     logging.basicConfig(level=level, format="%(message)s")
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(_MaskFilter())
     # Pipecat logs through loguru, which defaults to DEBUG: that prints each call's system
     # instruction (customer details) and what callers say. Same level as ours, phones masked.
     pipecat_logger.remove()

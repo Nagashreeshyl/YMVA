@@ -274,3 +274,5 @@ Then open http://localhost:3001. The user is `admin` and the password is `GRAFAN
 - [ ] Off-site backups run, and `./ymva verify-backup` passes.
 - [ ] Unattended OS security updates are on (`sudo apt install unattended-upgrades`).
 - [ ] An alert webhook is set and its test message arrived.
+- [ ] Tools only reach the internet. Leave `EGRESS_ALLOW_PRIVATE=false` unless a tool must call a system on your private network.
+- [ ] `METRICS_TOKEN` is set in `.env` (`./ymva start` adds it). Without it, `/api/metrics` stays off.

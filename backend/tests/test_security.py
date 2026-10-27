@@ -1,5 +1,6 @@
 """Break-it tests over every API route: who may call what, and random junk never crashes."""
 
+import asyncio
 import random
 import re
 import uuid
@@ -7,6 +8,7 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+import pytest
 
 from tests.test_calls_api import _no_network, _setup  # noqa: F401  (fixture used below)
 from ymva.main import create_app
@@ -183,3 +185,61 @@ async def test_other_websites_cannot_act_as_a_signed_in_admin(
         "/api/do-not-call", json={"numbers": "9845012345"}, headers={"Origin": "http://test"}
     )
     assert ours.status_code == 200
+
+
+def test_webhook_secrets_never_reach_the_logs() -> None:
+    from ymva.logging import _mask_value
+
+    path = "/api/telephony/vobiz/923975b8-a16f/S3cr3t-Value/answer?call=1"
+    assert "S3cr3t" not in _mask_value(path) and "/answer" in _mask_value(path)
+    assert "T0ken" not in _mask_value('"WebSocket /api/telephony/plivo/ws/T0ken" [accepted]')
+    assert _mask_value("/api/integrations/telephony/abc/test") == (
+        "/api/integrations/telephony/abc/test"
+    )
+
+
+async def test_a_forged_authorization_header_cannot_skip_the_origin_check(
+    admin_client: httpx.AsyncClient,
+) -> None:
+    evil = {"Origin": "https://evil.example", "Authorization": "Basic anything"}
+    resp = await admin_client.post("/api/do-not-call", json={"numbers": "9845012345"}, headers=evil)
+    assert resp.status_code == 403
+    # With its own credentials, a request is judged on them alone, never the cookie.
+    bogus = await admin_client.get("/api/auth/me", headers={"Authorization": "Bearer junk"})
+    assert bogus.status_code == 401
+
+
+async def test_tools_connect_only_to_the_address_that_was_checked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DNS rebinding: a name that is public when checked and internal when connecting."""
+    import socket
+
+    from ymva.services import egress
+    from ymva.services.tools import HttpConfig, run_tool
+
+    answers = iter(["93.184.215.14", "169.254.169.254"])
+
+    async def getaddrinfo(host: str, *_: Any, **__: Any) -> list[Any]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (next(answers, "169.254.169.254"), 0))]
+
+    connected: list[str] = []
+
+    class Inner:
+        async def connect_tcp(self, host: str, port: int, *_: Any, **__: Any) -> Any:
+            connected.append(host)
+            return None
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", getaddrinfo)
+    backend = egress._GuardedBackend(Inner())
+    await backend.connect_tcp("rebind.example", 443)
+    assert connected == ["93.184.215.14"]  # the checked IP, not a fresh lookup
+    with pytest.raises(egress.BlockedDestinationError):
+        await backend.connect_tcp("rebind.example", 443)  # now internal: refused
+
+    # Private addresses (this server's containers by IP) are blocked by default.
+    result = await run_tool("http", {"url": "http://172.18.0.3:6379/", "method": "GET"}, {}, {})
+    assert not result["ok"] and "doesn't send requests" in result["error"]
+    # A caller's words can't choose the server.
+    with pytest.raises(ValueError):
+        HttpConfig(url="https://{{host}}/x")

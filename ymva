@@ -67,6 +67,7 @@ ADMIN_PASSWORD=$admin_password
 # Generated secrets — do not share, do not change after first start.
 SECRET_KEY=$(rand 48)
 ENCRYPTION_KEY=$(fernet_key)
+METRICS_TOKEN=$(rand 40)
 POSTGRES_PASSWORD=$(rand 32)
 REDIS_PASSWORD=$(rand 32)
 
@@ -116,6 +117,8 @@ cmd_start() {
   need_docker
   FIRST_RUN=0
   ensure_env
+  # Installs from before the metrics token existed get one now.
+  [ -n "$(env_get METRICS_TOKEN)" ] || env_set METRICS_TOKEN "$(rand 40)"
   if [ "${monitoring:-0}" = "1" ]; then
     env_set COMPOSE_PROFILES monitoring
     [ -n "$(env_get GRAFANA_PASSWORD)" ] || env_set GRAFANA_PASSWORD "$(rand 20)"

@@ -1,11 +1,13 @@
 """System health for the dashboard, Prometheus metrics, and where alerts are sent."""
 
+import hmac
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
 from ymva.api.deps import AdminUser, CurrentUser, DbSession, client_ip
+from ymva.config import get_settings
 from ymva.models import AppSetting
 from ymva.redis import get_redis
 from ymva.services import audit, monitoring
@@ -20,8 +22,10 @@ class AlertsIn(BaseModel):
 
 @router.get("/metrics", include_in_schema=False)
 async def metrics(request: Request, db: DbSession) -> Response:
-    """Prometheus scrapes this inside the server; it's not served through the public site."""
-    if request.headers.get("x-forwarded-for"):
+    """Prometheus scrapes this with METRICS_TOKEN (the public site also refuses the path)."""
+    token = get_settings().metrics_token.get_secret_value()
+    given = request.headers.get("authorization", "").removeprefix("Bearer ")
+    if not token or not hmac.compare_digest(given.encode(), token.encode()):
         raise HTTPException(status.HTTP_404_NOT_FOUND)
     text = monitoring.prometheus_text(await monitoring.snapshot(db))
     return Response(text, media_type="text/plain; version=0.0.4")

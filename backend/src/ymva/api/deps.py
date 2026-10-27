@@ -49,11 +49,17 @@ async def _user_from_api_key(db: AsyncSession, token: str) -> User | None:
     return User(id=key.created_by_id, email=f"api-key:{key.name}", name=key.name, role=key.role)
 
 
+def is_api_key_header(auth: str) -> bool:
+    return auth.lower().startswith("bearer ") and auth[7:].startswith(API_KEY_PREFIX)
+
+
 async def current_user(request: Request, db: DbSession) -> User:
     user: User | None = None
     auth = request.headers.get("authorization", "")
-    if auth.lower().startswith("bearer ") and auth[7:].startswith(API_KEY_PREFIX):
-        user = await _user_from_api_key(db, auth[7:])
+    if auth:
+        # A request that brings its own credentials is judged on them alone, never on a
+        # cookie the browser added (that would let a forged header skip the origin check).
+        user = await _user_from_api_key(db, auth[7:]) if is_api_key_header(auth) else None
     elif token := request.cookies.get(SESSION_COOKIE):
         user = await _user_from_session(db, token)
     if user is None:

@@ -8,6 +8,7 @@ import httpx
 from pipecat.serializers.base_serializer import FrameSerializer
 from pipecat.serializers.exotel import ExotelFrameSerializer
 
+from ymva.services import egress
 from ymva.telephony.base import (
     CredentialField,
     PlacedCall,
@@ -63,7 +64,10 @@ class ExotelClient(TelephonyProviderClient):
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         auth = (str(self.credentials["api_key"]), str(self.credentials["api_token"]))
         try:
-            async with httpx.AsyncClient(auth=auth, timeout=TIMEOUT) as client:
+            # The subdomain is typed by the admin, so the address is guarded like tools'.
+            async with httpx.AsyncClient(
+                auth=auth, timeout=TIMEOUT, transport=egress.guarded_transport()
+            ) as client:
                 response = await client.request(method, f"{self._base}{path}", **kwargs)
         except httpx.HTTPError as exc:
             raise TelephonyError(f"Couldn't reach Exotel: {exc.__class__.__name__}") from exc

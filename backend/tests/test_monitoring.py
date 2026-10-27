@@ -22,16 +22,25 @@ def posted(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     monkeypatch.setattr(
         monitoring.httpx,
         "AsyncClient",
-        lambda *a, **k: real(*a, transport=httpx.MockTransport(handler), **k),
+        lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(handler)}),
     )
     return sent
 
 
-async def test_metrics_only_inside_the_server(client: httpx.AsyncClient) -> None:
-    inside = await client.get("/api/metrics")
-    assert inside.status_code == 200 and "ymva_calls_active 0" in inside.text
-    via_proxy = await client.get("/api/metrics", headers={"X-Forwarded-For": "203.0.113.9"})
-    assert via_proxy.status_code == 404
+async def test_metrics_need_the_token(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pydantic import SecretStr
+
+    from ymva.config import get_settings
+
+    assert (await client.get("/api/metrics")).status_code == 404  # no token set: off
+    monkeypatch.setattr(get_settings(), "metrics_token", SecretStr("m-token-123"))
+    assert (await client.get("/api/metrics")).status_code == 404  # anyone without it
+    wrong = await client.get("/api/metrics", headers={"Authorization": "Bearer nope"})
+    assert wrong.status_code == 404
+    ok = await client.get("/api/metrics", headers={"Authorization": "Bearer m-token-123"})
+    assert ok.status_code == 200 and "ymva_calls_active 0" in ok.text
 
 
 def test_problems_cover_each_check() -> None:

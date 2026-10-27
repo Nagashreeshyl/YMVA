@@ -252,7 +252,9 @@ async def alert_webhook(db: AsyncSession) -> str | None:
 
 async def send_alert(url: str, text: str) -> None:
     # "text" for Slack and Google Chat, "content" for Discord.
-    async with httpx.AsyncClient(timeout=10, event_hooks=egress.EVENT_HOOKS) as client:
+    async with httpx.AsyncClient(
+        timeout=10, event_hooks=egress.EVENT_HOOKS, transport=egress.guarded_transport()
+    ) as client:
         response = await client.post(url, json={"text": text, "content": text})
     response.raise_for_status()
 

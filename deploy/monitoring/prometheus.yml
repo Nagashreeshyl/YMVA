@@ -4,5 +4,7 @@ global:
 scrape_configs:
   - job_name: ymva
     metrics_path: /api/metrics
+    authorization:
+      credentials_file: /tmp/metrics-token  # METRICS_TOKEN from .env (see docker-compose.yml)
     static_configs:
       - targets: ["api:8000"]

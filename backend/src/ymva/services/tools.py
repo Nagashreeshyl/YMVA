@@ -91,6 +91,14 @@ class HttpConfig(BaseModel):
     # JSON body with {{placeholders}}; empty sends the agent's values as a JSON object.
     body: str = Field(default="", max_length=10000)
 
+    @field_validator("url")
+    @classmethod
+    def _fixed_host(cls, v: str) -> str:
+        # Callers' words fill {{placeholders}}; in the address part they could pick the server.
+        if "{{" in v.split("/", 3)[2]:  # "https:", "", host, path
+            raise ValueError("Placeholders can go in the path or query, not the web address")
+        return v
+
 
 class DatabaseConfig(BaseModel):
     # SQL with {{placeholders}}; they're sent as query parameters, never pasted into the SQL.
@@ -264,7 +272,10 @@ async def _run_apps_script(
     }
     # Google answers a web app POST with a redirect to the result, which httpx follows as GET.
     async with httpx.AsyncClient(
-        timeout=TOOL_TIMEOUT_SECS, follow_redirects=True, event_hooks=egress.EVENT_HOOKS
+        timeout=TOOL_TIMEOUT_SECS,
+        follow_redirects=True,
+        event_hooks=egress.EVENT_HOOKS,
+        transport=egress.guarded_transport(),
     ) as client:
         response = await client.post(str(secrets["script_url"]), json=request)
     try:
@@ -417,7 +428,10 @@ async def _run_http(
             content = json.dumps(values)
         headers.setdefault("Content-Type", "application/json")
     async with httpx.AsyncClient(
-        timeout=TOOL_TIMEOUT_SECS, follow_redirects=True, event_hooks=egress.EVENT_HOOKS
+        timeout=TOOL_TIMEOUT_SECS,
+        follow_redirects=True,
+        event_hooks=egress.EVENT_HOOKS,
+        transport=egress.guarded_transport(),
     ) as client:
         response = await client.request(config.method, url, headers=headers, content=content)
     text = response.text[:MAX_RESULT_CHARS]
@@ -474,12 +488,17 @@ async def _run_database(
     url = DatabaseSecrets.model_validate(secrets).connection
     sql, names = _bind(config.query)
     try:
+        # Connect to the checked IP only: never YMVA's own database or another container.
+        host = await egress.safe_ip(urlsplit(url).hostname or "")
         conn = await asyncpg.connect(
             url,
+            host=host,
             timeout=5,
             server_settings={"statement_timeout": "8000", "application_name": "ymva-tool"},
         )
-    except (OSError, asyncpg.PostgresError) as exc:
+    except egress.BlockedDestinationError as exc:
+        raise ToolError(str(exc)) from exc
+    except (OSError, httpx.HTTPError, asyncpg.PostgresError) as exc:
         raise ToolError(f"Couldn't connect to the database: {exc.__class__.__name__}") from exc
     try:
         # Read tools run read-only, so even a mistaken query can't change data.
@@ -511,7 +530,10 @@ def _mcp_client(server_url: str, headers: dict[str, str]) -> Any:
     from mcp.client.streamable_http import streamable_http_client
 
     http = httpx2.AsyncClient(
-        headers=headers, timeout=TOOL_TIMEOUT_SECS, event_hooks=egress.EVENT_HOOKS
+        headers=headers,
+        timeout=TOOL_TIMEOUT_SECS,
+        event_hooks=egress.EVENT_HOOKS,
+        transport=egress.guarded_transport2(),
     )
     return Client(
         streamable_http_client(server_url, http_client=http),

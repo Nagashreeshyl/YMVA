@@ -127,7 +127,15 @@ services:
     <<: *defaults
     image: prom/prometheus:v3.5.0
     profiles: [monitoring]
-    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=90d"]
+    # Prometheus can't read environment variables in its config: hand it the token as a file.
+    environment:
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        printf %s "$$METRICS_TOKEN" > /tmp/metrics-token &&
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml
+        --storage.tsdb.path=/prometheus --storage.tsdb.retention.time=90d
     volumes:
       - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
