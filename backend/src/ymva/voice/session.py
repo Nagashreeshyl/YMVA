@@ -485,6 +485,7 @@ class CallSession:
                     # before the model to see it.
                     guard,
                     llm,
+                    LeadingSilenceTrimmer(),  # Gemini's voice can start with a beat of silence
                     self.transport.output(),
                     self.recording.processor,
                     pair.assistant(),

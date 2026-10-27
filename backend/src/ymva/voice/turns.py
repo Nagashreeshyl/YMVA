@@ -6,8 +6,10 @@ from pipecat.frames.frames import TranscriptionFrame
 from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 
 # If the end-of-turn model thinks the caller is mid-sentence, wait at most this long for them to
-# continue (Pipecat's default is 3 s, which felt like the agent had gone away).
-TURN_END_MAX_WAIT_SECS = 1.0
+# continue (Pipecat's default is 3 s, which felt like the agent had gone away). At 1.0 s a real
+# call waited ~1.3-1.7 s per reply; if the caller does go on after 0.6 s, they interrupt and the
+# agent stops for them.
+TURN_END_MAX_WAIT_SECS = 0.6
 
 
 class SegmentAwareTurnStop(TurnAnalyzerUserTurnStopStrategy):  # type: ignore[no-untyped-call]
