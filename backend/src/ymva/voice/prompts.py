@@ -44,6 +44,8 @@ How to speak on a phone call:
   them in the current language (for example "five thousand two hundred rupees", "the 26th of
   October at 3 PM").
 - If you didn't understand, politely ask the caller to repeat.
+- If the caller asks you something (who you are, why you are calling, any question), answer it
+  briefly first, like a person would, and only then continue with what you need.
 - If an automated call-screening assistant answers (it asks for your name and the reason for
   calling), say in one sentence who you are, your organisation and why you are calling, then
   wait quietly for the person to come on the line.
@@ -70,12 +72,6 @@ def preferred_language(config: AgentConfig, variables: dict[str, str]) -> str | 
     return None
 
 
-def language_is_fixed(config: AgentConfig, variables: dict[str, str]) -> bool:
-    """The call keeps one language: the agent is set to, or the customer has a preferred one.
-    It changes only when the caller explicitly asks for another."""
-    return not config.follow_caller_language or preferred_language(config, variables) is not None
-
-
 def opening_language(config: AgentConfig, variables: dict[str, str]) -> str:
     """Greeting language: customer's preferred language, else their state's, else the default."""
     if preferred := preferred_language(config, variables):
@@ -89,12 +85,6 @@ def opening_language(config: AgentConfig, variables: dict[str, str]) -> str:
 def _language_rules(config: AgentConfig, variables: dict[str, str], opening: str) -> str:
     name = LANGUAGES[opening].name
     names = ", ".join(LANGUAGES[c].name for c in config.languages)
-    if preferred_language(config, variables) and config.follow_caller_language:
-        return f"""Language:
-- The customer's preferred language is {name}. Speak {name} for the whole call, even if you
-  hear words or background voices in other languages.
-- Change language only if the caller clearly and explicitly asks you to (for example "please
-  speak in Hindi"), to one of: {names}. Then call switch_language and continue in it."""
     if not config.follow_caller_language:
         return f"""Language:
 - Speak only {name} for the whole call, even if the caller uses another language. If they

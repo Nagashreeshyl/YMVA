@@ -4,18 +4,15 @@ Pipeline mode (deterministic): sits between STT and the user aggregator. When a 
 arrives in a new language it (1) adds a note to the LLM context telling it to reply in that
 language and (2) switches the TTS voice's language, before the turn reaches the LLM.
 
-Gemini Live mode (best effort): Gemini hears the audio directly. The guard reads Gemini's input
-transcription and adds a silent note to the live session so the following replies use the
-caller's language.
+Gemini Live mode: Gemini hears the audio and switches language natively; the guard only
+records the switch (for the call's transcript and language stats).
 """
 
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from loguru import logger
 from pipecat.frames.frames import (
     Frame,
-    InterruptionFrame,
     LLMMessagesAppendFrame,
     TranscriptionFrame,
     TTSUpdateSettingsFrame,
@@ -99,15 +96,12 @@ class LanguageGuard(FrameProcessor):
         await self._on_switch(previous, code)
 
     async def _apply_switch(self, code: str) -> None:
-        info = LANGUAGES[code]
         if self._gemini_live is not None:
-            # Gemini has usually started answering in the old language by the time its
-            # transcript arrives: stop that reply and have it answer again in the new one.
-            await self.push_frame(InterruptionFrame())
-            await self._steer_gemini_live(
-                language_note(code) + f" Answer the caller's last message again, in {info.name}."
-            )
+            # Gemini Live's native audio follows the caller's language by itself. Messages sent
+            # into a live session mid-call (the old "language update" note) are known to garble
+            # Gemini 3.8 Live's transcripts, so in Live mode the switch is only recorded.
             return
+        info = LANGUAGES[code]
         await self.push_frame(
             LLMMessagesAppendFrame(
                 messages=[{"role": "user", "content": language_note(code)}], run_llm=False
@@ -119,17 +113,3 @@ class LanguageGuard(FrameProcessor):
                     delta=SarvamTTSService.Settings(language=info.pipecat), service=self._tts
                 )
             )
-
-    async def _steer_gemini_live(self, note: str) -> None:
-        # Completes the turn with the note, so Gemini replies again following it.
-        session = getattr(self._gemini_live, "_session", None)
-        if session is None:
-            return
-        try:
-            from google.genai.types import Content, Part
-
-            await session.send_client_content(
-                turns=Content(role="user", parts=[Part(text=note)]), turn_complete=True
-            )
-        except Exception as exc:
-            logger.warning(f"Couldn't send language note to Gemini Live: {exc}")

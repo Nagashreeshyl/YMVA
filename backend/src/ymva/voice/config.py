@@ -24,8 +24,10 @@ LLM_MODELS = (
 )
 # Measured from the caller going quiet to the agent's first sound (thinking off):
 # gemini-3.8-live 0.7-0.9 s, gemini-3.1-flash-live-preview 0.7-1.1 s, 2.5 native audio 3-5 s.
-GEMINI_LIVE_MODELS = ("models/gemini-3.8-live", "models/gemini-3.1-flash-live-preview")
+GEMINI_LIVE_MODELS = ("models/gemini-3.8-live",)
 RETIRED_LIVE_MODELS = {
+    # Preview; 3.8 Live is Google's generally available, recommended low-latency voice model.
+    "models/gemini-3.1-flash-live-preview": "models/gemini-3.8-live",
     "models/gemini-2.5-flash-native-audio-latest": "models/gemini-3.8-live",
     "models/gemini-2.5-flash-native-audio-preview-12-2025": "models/gemini-3.8-live",
     "models/gemini-2.5-flash-native-audio-preview-09-2025": "models/gemini-3.8-live",

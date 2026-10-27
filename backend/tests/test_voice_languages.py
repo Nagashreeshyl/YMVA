@@ -268,19 +268,15 @@ def test_agent_can_keep_to_one_language() -> None:
     assert "explicitly asks you to speak a particular language" in follow
 
 
-async def test_preferred_language_holds_until_the_caller_asks_for_another() -> None:
+async def test_preferred_language_opens_then_the_caller_is_followed() -> None:
     from pipecat.frames.frames import TranscriptionFrame
 
-    config = interest_reminder().model_copy(update={"mode": "gemini_live"})
+    config = interest_reminder()
     session = _session(config, {"preferred_language": "kn"})
     _, _, _, guard, _ = session._build()  # type: ignore[attr-defined]
     assert session.opening == "kn"  # type: ignore[attr-defined]
-    # Stray speech in another script doesn't switch a call with a preferred language...
     await run_test(guard, frames_to_send=[TranscriptionFrame("हाँ जी बोलिए अभी", "", "")])
-    assert guard.current == "kn"
-    # ...an explicit request (the model's switch_language action) does.
-    await guard.switch_to("hi", steer=False)
-    assert guard.current == "hi"
+    assert guard.current == "hi"  # the caller spoke Hindi: the call follows them
     text = system_instruction(config, {"preferred_language": "kn"}, "kn", "Asia/Kolkata")
-    assert "preferred language is Kannada" in text and "explicitly asks" in text
-    assert "call-screening assistant" in text
+    assert "Start in Kannada" in text and "call-screening assistant" in text
+    assert "answer it" in text  # a caller's question is answered first
