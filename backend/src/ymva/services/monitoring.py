@@ -34,6 +34,7 @@ from ymva.models import (
     ProviderAccount,
 )
 from ymva.redis import get_redis
+from ymva.services import egress
 from ymva.services.calls import ACTIVE_STATUSES
 from ymva.services.dialer import DIALER_TICK_KEY
 from ymva.services.drain import is_draining
@@ -251,7 +252,7 @@ async def alert_webhook(db: AsyncSession) -> str | None:
 
 async def send_alert(url: str, text: str) -> None:
     # "text" for Slack and Google Chat, "content" for Discord.
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, event_hooks=egress.EVENT_HOOKS) as client:
         response = await client.post(url, json={"text": text, "content": text})
     response.raise_for_status()
 

@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ymva.logging import get_logger
 from ymva.models import Tool
 from ymva.security import decrypt_json
+from ymva.services import egress
 from ymva.voice.config import VARIABLE_RE, render
 
 log = get_logger(__name__)
@@ -299,7 +300,9 @@ async def _run_http(
         else:
             content = json.dumps(values)
         headers.setdefault("Content-Type", "application/json")
-    async with httpx.AsyncClient(timeout=TOOL_TIMEOUT_SECS, follow_redirects=True) as client:
+    async with httpx.AsyncClient(
+        timeout=TOOL_TIMEOUT_SECS, follow_redirects=True, event_hooks=egress.EVENT_HOOKS
+    ) as client:
         response = await client.request(config.method, url, headers=headers, content=content)
     text = response.text[:MAX_RESULT_CHARS]
     try:
@@ -391,7 +394,9 @@ def _mcp_client(server_url: str, headers: dict[str, str]) -> Any:
     from mcp import Client
     from mcp.client.streamable_http import streamable_http_client
 
-    http = httpx2.AsyncClient(headers=headers, timeout=TOOL_TIMEOUT_SECS)
+    http = httpx2.AsyncClient(
+        headers=headers, timeout=TOOL_TIMEOUT_SECS, event_hooks=egress.EVENT_HOOKS
+    )
     return Client(
         streamable_http_client(server_url, http_client=http),
         read_timeout_seconds=TOOL_TIMEOUT_SECS,
@@ -500,6 +505,8 @@ async def run_tool(
         return {"ok": False, "error": f"Unknown tool type {exc}"}
     except TimeoutError:
         return {"ok": False, "error": "The service took too long to answer"}
+    except egress.BlockedDestinationError as exc:
+        return {"ok": False, "error": str(exc)}
     except httpx.HTTPError as exc:
         return {"ok": False, "error": f"Couldn't reach the service: {exc.__class__.__name__}"}
     encoded = json.dumps(result, ensure_ascii=False, default=str)

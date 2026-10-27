@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Path, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
@@ -70,7 +70,12 @@ async def add_numbers(
 
 
 @router.delete("/{phone}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_number(phone: str, request: Request, admin: AdminUser, db: DbSession) -> None:
+async def remove_number(
+    request: Request,
+    admin: AdminUser,
+    db: DbSession,
+    phone: str = Path(pattern=r"^\+\d{6,15}$"),
+) -> None:
     result = await db.execute(delete(DoNotCall).where(DoNotCall.phone == phone))
     if not result.rowcount:  # type: ignore[attr-defined]
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not on the list")
