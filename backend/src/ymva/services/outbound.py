@@ -1,8 +1,10 @@
 """Placing an outbound phone call: used by "Call a phone" and by the campaign dialer."""
 
+import time
 from typing import Any
 from urllib.parse import urlsplit
 
+import httpx
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,12 +27,47 @@ from ymva.services.calls import (
     string_variables,
 )
 from ymva.services.drain import is_draining
-from ymva.services.integrations import load_ai_keys, telephony_client, webhook_urls
+from ymva.services.integrations import (
+    load_ai_keys,
+    public_base_url,
+    telephony_client,
+    webhook_urls,
+)
 from ymva.telephony import TelephonyError
 from ymva.voice import greeting
 from ymva.voice.config import AgentConfig
 
 PHONE_SAMPLE_RATE = 16000
+
+
+# When the public address last answered; checked at most once a minute (campaigns dial a lot).
+_reachable_at = 0.0
+
+
+async def _check_public_address(provider: str) -> None:
+    """The provider must reach our webhooks. A temporary tunnel can expire unnoticed, and the
+    provider then only says "answer_url is not valid", so check it ourselves first."""
+    global _reachable_at
+    base = public_base_url()
+    if urlsplit(base).hostname in ("localhost", "127.0.0.1"):
+        raise CallSetupError(
+            f"{provider} can't reach this computer's address (localhost). "
+            "Restart with ./ymva start --tunnel, or set a public domain."
+        )
+    if time.monotonic() - _reachable_at < 60:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            ok = (await client.get(f"{base}/api/health")).status_code == 200
+    except httpx.HTTPError:
+        ok = False
+    if not ok:
+        raise CallSetupError(
+            f"{provider} can't reach YMVA: the public address {base} isn't answering (a "
+            "temporary tunnel expires after a while). Run ./ymva start --tunnel for a new one, "
+            "or set a permanent domain."
+        )
+    _reachable_at = time.monotonic()
 
 
 async def start_outbound_call(
@@ -52,12 +89,8 @@ async def start_outbound_call(
     account = await db.get(ProviderAccount, number.provider_account_id)
     if account is None or not account.is_active or not number.is_active:
         raise CallSetupError("This number or its account is turned off")
-    host = urlsplit(webhook_urls(account)["answer_url"]).hostname or ""
-    if account.provider != TelephonyProvider.SIMULATOR and host in ("localhost", "127.0.0.1"):
-        raise CallSetupError(
-            f"{account.provider.value.title()} can't reach this computer's address (localhost). "
-            "Restart with ./ymva start --tunnel, or set a public domain."
-        )
+    if account.provider != TelephonyProvider.SIMULATOR:
+        await _check_public_address(account.provider.value.title())
     if agent.status in (AgentStatus.PAUSED, AgentStatus.ARCHIVED):  # a real phone rings
         raise CallSetupError(f"{agent.name} is {agent.status.value}. Resume it to make calls.")
     version, config = await runnable_version(db, agent, draft=use_edits)

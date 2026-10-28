@@ -7,6 +7,7 @@ import pytest
 from ymva.models import AIProvider
 from ymva.redis import get_redis
 from ymva.services import integrations as integrations_service
+from ymva.services import outbound as outbound_service
 from ymva.telephony.base import PlacedCall
 from ymva.telephony.plivo_family import PlivoClient
 from ymva.voice import greeting
@@ -32,6 +33,8 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         return None
 
     monkeypatch.setattr(greeting, "_synthesize", no_greeting)
+    # The test address isn't on the internet; treat it as just checked and reachable.
+    monkeypatch.setattr(outbound_service, "_reachable_at", float("inf"))
     monkeypatch.setattr(integrations_service, "verify_ai_key", verify_ai_key)
     monkeypatch.setattr(PlivoClient, "verify", verify)
     monkeypatch.setattr(PlivoClient, "place_call", place_call)
@@ -423,3 +426,21 @@ async def test_phone_calls_keep_the_settings_they_ran_with(
         # Calls from before settings were kept on the call fall back to their version.
         live.agent_config = None
         assert (await _analysis(db, live)).details  # not empty defaults from nowhere
+
+
+async def test_an_expired_public_address_is_explained_before_dialing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ymva.services.calls import CallSetupError
+
+    monkeypatch.setattr(outbound_service, "_reachable_at", 0.0)
+    monkeypatch.setattr(
+        outbound_service, "public_base_url", lambda: "https://gone.trycloudflare.com"
+    )
+
+    async def unreachable(*_: Any, **__: Any) -> Any:
+        raise httpx.ConnectError("Tunnel not found")
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", unreachable)
+    with pytest.raises(CallSetupError, match="--tunnel"):
+        await outbound_service._check_public_address("Vobiz")

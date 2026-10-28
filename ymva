@@ -159,6 +159,14 @@ cmd_start() {
 start_tunnel() {
   info "Opening a temporary public address..."
   local url=""
+  # Cloudflare drops quick tunnels after a while while the container keeps running ("Tunnel
+  # not found"). If the current address doesn't answer, start a fresh tunnel (new address).
+  url="$(COMPOSE_PROFILES=tunnel compose logs tunnel 2>/dev/null | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1 || true)"
+  if [ -n "$url" ] && ! curl -fsS -m 10 "$url/api/health" >/dev/null 2>&1; then
+    info "The old public address has expired; opening a new one..."
+    COMPOSE_PROFILES=tunnel compose up -d --force-recreate tunnel >/dev/null
+  fi
+  url=""
   for _ in $(seq 1 45); do
     url="$(COMPOSE_PROFILES=tunnel compose logs tunnel 2>/dev/null | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1 || true)"
     [ -n "$url" ] && break
