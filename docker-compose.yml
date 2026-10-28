@@ -121,6 +121,18 @@ services:
     depends_on:
       - caddy
 
+  # Steady test address for phone providers: ./ymva start --tunnel with NGROK_AUTHTOKEN and
+  # NGROK_DOMAIN in .env (a free ngrok account includes one fixed domain).
+  ngrok:
+    <<: *defaults
+    image: ngrok/ngrok:3.39.12-alpine
+    profiles: ["ngrok"]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    command: ["http", "caddy:80", "--url", "https://${NGROK_DOMAIN:-unset}", "--log", "stdout"]
+    depends_on:
+      - caddy
+
   # Optional history graphs: ./ymva start --monitoring, then open Grafana through an SSH tunnel
   # (ssh -L 3001:localhost:3001 your-server) at http://localhost:3001.
   prometheus:

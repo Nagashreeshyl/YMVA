@@ -129,12 +129,19 @@ cmd_start() {
     env_set PUBLIC_URL "https://$domain"
     info "Serving on https://$domain (HTTPS certificate is issued automatically)."
   fi
-  if [ "$tunnel" = "0" ] && case "$(env_get TELEPHONY_PUBLIC_URL)" in *trycloudflare.com*) true ;; *) false ;; esac; then
+  if [ "$tunnel" = "0" ] && case "$(env_get TELEPHONY_PUBLIC_URL)" in *trycloudflare.com*|*ngrok*) true ;; *) false ;; esac; then
     env_set TELEPHONY_PUBLIC_URL ""
-    COMPOSE_PROFILES=tunnel compose rm -sf tunnel >/dev/null 2>&1 || true
+    COMPOSE_PROFILES=tunnel,ngrok compose rm -sf tunnel ngrok >/dev/null 2>&1 || true
   fi
   bold "Starting YMVA..."
-  if [ "$tunnel" = "1" ]; then
+  if [ "$tunnel" = "1" ] && [ -n "$(env_get NGROK_AUTHTOKEN)" ] && [ -n "$(env_get NGROK_DOMAIN)" ]; then
+    # ngrok: a fixed address that stays up (the free Cloudflare one stalled live calls).
+    local profiles="ngrok" extra; extra="$(env_get COMPOSE_PROFILES)"
+    [ -n "$extra" ] && profiles="ngrok,$extra"
+    COMPOSE_PROFILES=tunnel compose rm -sf tunnel >/dev/null 2>&1 || true
+    COMPOSE_PROFILES="$profiles" compose up -d --build --remove-orphans
+    start_ngrok
+  elif [ "$tunnel" = "1" ]; then
     local profiles="tunnel" extra; extra="$(env_get COMPOSE_PROFILES)"
     [ -n "$extra" ] && profiles="tunnel,$extra"  # keep monitoring on if it is
     COMPOSE_PROFILES="$profiles" compose up -d --build --remove-orphans
@@ -153,6 +160,20 @@ cmd_start() {
     compose ps
     fail "YMVA did not become ready in time. See logs with: ./ymva logs api"
   fi
+}
+
+start_ngrok() {
+  local url; url="https://$(env_get NGROK_DOMAIN | sed -E 's#^https?://##; s#/.*$##')"
+  env_set TELEPHONY_PUBLIC_URL "$url"
+  compose up -d api >/dev/null  # recreate so the API picks up the address
+  info "Opening $url through ngrok..."
+  for _ in $(seq 1 30); do
+    curl -fsS -m 10 "$url/api/health" >/dev/null 2>&1 && break
+    sleep 2
+  done
+  curl -fsS -m 10 "$url/api/health" >/dev/null 2>&1 \
+    || fail "ngrok didn't come up at $url. Check NGROK_AUTHTOKEN and NGROK_DOMAIN in .env, then: ./ymva logs ngrok"
+  info "Public address for phone providers: $url (fixed: it stays the same across restarts)"
 }
 
 # Reads the quick-tunnel address from cloudflared's log and points telephony webhooks at it.
@@ -176,7 +197,8 @@ start_tunnel() {
   env_set TELEPHONY_PUBLIC_URL "$url"
   compose up -d api >/dev/null  # recreate so the API picks up the new address
   info "Public address for phone providers: $url"
-  info "(It changes every time the tunnel restarts. Use --domain on a server for a permanent one.)"
+  info "(It changes every time the tunnel restarts, and it can stall live calls. For steady test"
+  info " calls add NGROK_AUTHTOKEN and NGROK_DOMAIN to .env; on a server use --domain.)"
 }
 
 cmd_backup() {
@@ -314,7 +336,7 @@ usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; }
 
 case "${1:-}" in
   start) shift; cmd_start "$@" ;;
-  stop) need_docker; COMPOSE_PROFILES=tunnel compose down ;;
+  stop) need_docker; COMPOSE_PROFILES=tunnel,ngrok compose down ;;
   restart) cmd_restart ;;
   reset-admin) cmd_reset_admin ;;
   status) need_docker; compose ps ;;
