@@ -105,15 +105,17 @@ def system_instruction(
 ) -> str:
     now = datetime.now(ZoneInfo(timezone))
     known = "\n".join(f"- {k}: {v}" for k, v in variables.items() if v) or "- (none)"
-    return f"""{render(config.system_prompt, variables, missing="[not provided]").strip()}
+    # Language rules first: placed after a long prompt, Gemini Live kept answering Telugu in
+    # the English the call opened with.
+    return f"""{_language_rules(config, variables, opening)}
+
+{render(config.system_prompt, variables, missing="[not provided]").strip()}
 
 Call details:
 - Today is {now:%A, %d %B %Y}, and the time is {now:%I:%M %p} ({timezone}). Resolve dates like
   "tomorrow" or "the 26th" relative to today, and confirm the full date with the caller.
 - What you know about this caller:
 {known}
-
-{_language_rules(config, variables, opening)}
 
 {EVERYDAY_MIX if config.speaking_style == "everyday_mix" else PURE_LANGUAGE}
 

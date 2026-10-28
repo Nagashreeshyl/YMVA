@@ -41,6 +41,7 @@ from pipecat.services.sarvam.stt import SarvamSTTService
 from pipecat.services.sarvam.tts import SarvamTTSService
 from pipecat.services.tts_service import TextAggregationMode
 from pipecat.transports.base_transport import BaseTransport
+from pipecat.turns.user_start import VADUserTurnStartStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from ymva.config import get_settings
@@ -405,7 +406,14 @@ class CallSession:
         user_params = LLMUserAggregatorParams(
             vad_analyzer=vad,
             user_idle_timeout=config.limits.silence_timeout_seconds,
-            user_turn_strategies=UserTurnStrategies(stop=[turn_end]),
+            user_turn_strategies=UserTurnStrategies(
+                # With Gemini's detection in charge, ours only marks turns for the transcript:
+                # two detectors both interrupting made Gemini cancel and restart replies (2-5 s).
+                start=[VADUserTurnStartStrategy(enable_interruptions=False)]
+                if config.mode == "gemini_live" and LIVE_TURN_DETECTION == "gemini"
+                else None,
+                stop=[turn_end],
+            ),
         )
 
         if config.mode == "gemini_live":
