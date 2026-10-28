@@ -49,6 +49,7 @@ from ymva.logging import get_logger
 from ymva.models import CallEventType, CallStatus
 from ymva.services import analysis
 from ymva.services.tools import LoadedTool, call_facts, run_tool
+from ymva.telephony.plivo_family import CheckpointSerializer
 from ymva.voice import greeting
 from ymva.voice.ambience import AmbienceMixer
 from ymva.voice.config import AgentConfig
@@ -56,6 +57,7 @@ from ymva.voice.gemini_live import ResilientGeminiLive
 from ymva.voice.guard import LanguageGuard
 from ymva.voice.languages import LANGUAGES
 from ymva.voice.live_state import ConversationState
+from ymva.voice.playback import PlaybackGuard
 from ymva.voice.prompts import (
     GOODBYES,
     opening_language,
@@ -378,6 +380,19 @@ class CallSession:
 
     # ---- pipeline construction ---------------------------------------------------------
 
+    def _playback_guard(self) -> list[FrameProcessor]:
+        """Vobiz/Plivo calls: keep the phone's playback queue from falling behind."""
+        serializer = self.setup.extra.get("serializer")
+        if not isinstance(serializer, CheckpointSerializer):
+            return []
+
+        async def resynced(lag: float) -> None:
+            await self.recorder.event(
+                CallEventType.STATUS, f"The phone was {lag:.1f} s behind the agent; caught up"
+            )
+
+        return [PlaybackGuard(serializer, resynced)]
+
     def _switchable(self) -> list[str]:
         """Languages the call may switch to: only the opening one when the agent keeps to it."""
         config = self.setup.config
@@ -466,6 +481,7 @@ class CallSession:
                     guard,
                     llm,
                     LeadingSilenceTrimmer(),  # Gemini's voice can start with a beat of silence
+                    *self._playback_guard(),
                     self.transport.output(),
                     self.recording.processor,
                     pair.assistant(),
@@ -550,6 +566,7 @@ class CallSession:
                 llm,
                 tts,
                 LeadingSilenceTrimmer(),
+                *self._playback_guard(),
                 self.transport.output(),
                 self.recording.processor,
                 pair.assistant(),

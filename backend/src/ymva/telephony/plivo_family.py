@@ -1,10 +1,13 @@
 """Plivo and Vobiz. Vobiz implements Plivo's call API, answer XML and media-stream protocol;
 they differ in API host and authentication."""
 
+import json
+from collections.abc import Awaitable, Callable
 from typing import Any, ClassVar
 
 import httpx
 from loguru import logger
+from pipecat.frames.frames import Frame
 from pipecat.serializers.plivo import PlivoFrameSerializer
 
 from ymva.telephony.base import (
@@ -164,7 +167,7 @@ class PlivoClient(_PlivoFamily):
             raise TelephonyError(f"Plivo check failed: {self._error_text(response)}")
 
     def serializer(self, start: StreamStart) -> PlivoFrameSerializer:
-        return PlivoFrameSerializer(
+        return CheckpointSerializer(
             stream_id=start.stream_id,
             call_id=start.provider_call_id,
             auth_id=self.auth_id,
@@ -173,7 +176,25 @@ class PlivoClient(_PlivoFamily):
         )
 
 
-class VobizFrameSerializer(PlivoFrameSerializer):
+class CheckpointSerializer(PlivoFrameSerializer):
+    """Plivo's media protocol, passing the phone's playback confirmations ("playedStream" for a
+    checkpoint we sent) to `played`, so the call can tell how far behind the phone is."""
+
+    played: Callable[[str], Awaitable[None]] | None = None
+
+    async def deserialize(self, data: str | bytes) -> Frame | None:
+        if self.played is not None and isinstance(data, str) and '"playedStream"' in data:
+            try:
+                message = json.loads(data)
+            except ValueError:
+                message = {}
+            if message.get("event") == "playedStream":
+                await self.played(str(message.get("name", "")))
+                return None
+        return await super().deserialize(data)
+
+
+class VobizFrameSerializer(CheckpointSerializer):
     """Plivo's media protocol, with hang-up through Vobiz's API."""
 
     async def _hang_up_call(self) -> None:

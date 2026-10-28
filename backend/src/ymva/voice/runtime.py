@@ -91,6 +91,7 @@ async def run_on_websocket(
             session_timeout=setup.config.limits.max_duration_seconds + 60,
         ),
     )
+    setup.extra["serializer"] = serializer  # the playback guard talks to the provider
     session = CallSession(setup, transport)
     ACTIVE_SESSIONS[setup.call_id] = session
     try:

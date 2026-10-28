@@ -124,8 +124,12 @@ def _stream_url(fmt: str, body: str) -> str:
     if fmt == "vonage":
         return str(json.loads(body)[0]["endpoint"][0]["uri"])
     answer = ElementTree.fromstring(body.split("\n", 1)[1])  # noqa: S314 (our own app's reply)
-    stream = answer.find("Connect/Stream")
-    url = stream.get("url") if stream is not None else None
+    if fmt == "plivo":  # <Response><Stream ...>wss://...</Stream></Response>
+        stream = answer.find("Stream")
+        url = stream.text if stream is not None else None
+    else:
+        stream = answer.find("Connect/Stream")
+        url = stream.get("url") if stream is not None else None
     if not url:
         raise ValueError(f"no audio stream in the answer: {body[:300]}")
     return url
@@ -169,6 +173,7 @@ class Customer:
                     "start": {"stream_sid": stream, "call_sid": sid},
                 },
                 "vonage": {"event": "websocket:connected", "content-type": "audio/l16;rate=16000"},
+                "plivo": {"event": "start", "start": {"streamId": stream, "callId": sid}},
             }
             start = starts[self.fmt]
             if self.fmt == "twilio":
@@ -181,7 +186,12 @@ class Customer:
                         audio = self._decode(message)
                     else:
                         event = json.loads(message)
-                        if event.get("event") != "media":
+                        if event.get("event") == "checkpoint":  # Plivo: confirm playback
+                            await ws.send(json.dumps({"event": "playedStream",
+                                                      "streamId": stream,
+                                                      "name": event.get("name")}))  # fmt: skip
+                            continue
+                        if event.get("event") not in ("media", "playAudio"):  # playAudio: Plivo
                             continue
                         audio = self._decode(base64.b64decode(event["media"]["payload"]))
                     samples = np.frombuffer(audio, np.int16)
@@ -243,6 +253,10 @@ def _form(fmt: str, sid: str, caller: str, ours: str, status: str | None = None)
         return form | ({"status": status} if status else {})
     if fmt == "exotel":
         return {"CallSid": sid, "From": caller, "To": ours} | ({"Status": status} if status else {})
+    if fmt == "plivo":
+        return {"CallUUID": sid, "From": caller, "To": ours} | (
+            {"CallStatus": status} if status else {}
+        )
     return {"CallSid": sid, "From": caller, "To": ours} | ({"CallStatus": status} if status else {})
 
 

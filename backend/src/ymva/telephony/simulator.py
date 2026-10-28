@@ -21,6 +21,7 @@ from ymva.telephony.base import (
     WebhookCall,
 )
 from ymva.telephony.exotel import ExotelClient
+from ymva.telephony.plivo_family import PlivoClient
 from ymva.telephony.twilio_family import TelnyxClient, TwilioClient
 from ymva.telephony.vonage import VonageClient
 
@@ -31,6 +32,7 @@ FORMATS: dict[str, type[TelephonyProviderClient]] = {
     "telnyx": TelnyxClient,
     "exotel": ExotelClient,
     "vonage": VonageClient,
+    "plivo": PlivoClient,  # Plivo's media protocol, as Vobiz uses
 }
 # Credentials the real clients need to build their serializers; never used to reach anyone.
 _PLACEHOLDER = {
@@ -38,18 +40,21 @@ _PLACEHOLDER = {
     "auth_token": "simulator",
     "api_key": "simulator",
     "texml_app_id": "simulator",
+    "auth_id": "MAsimulator",
 }
 
 
 class SimulatorClient(TelephonyProviderClient):
     name = "Simulator"
-    fields = (CredentialField("format", "Speaks like", hint="twilio, telnyx, exotel or vonage"),)
+    fields = (
+        CredentialField("format", "Speaks like", hint="twilio, telnyx, exotel, vonage or plivo"),
+    )
 
     @classmethod
     def validate_credentials(cls, credentials: dict[str, Any]) -> dict[str, str]:
         cleaned = super().validate_credentials(credentials)
         if cleaned["format"] not in FORMATS:
-            raise ValueError("Format must be twilio, telnyx, exotel or vonage")
+            raise ValueError("Format must be twilio, telnyx, exotel, vonage or plivo")
         return cleaned
 
     @property
