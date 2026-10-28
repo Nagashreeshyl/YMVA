@@ -13,7 +13,13 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 
-from pipecat.frames.frames import Frame, OutputTransportMessageUrgentFrame, StartFrame
+from pipecat.frames.frames import (
+    CancelFrame,
+    EndFrame,
+    Frame,
+    OutputTransportMessageUrgentFrame,
+    StartFrame,
+)
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from ymva.telephony.plivo_family import CheckpointSerializer
@@ -30,12 +36,17 @@ class PlaybackGuard(FrameProcessor):
         super().__init__()
         self._serializer = serializer
         self._on_resync = on_resync
+        self._cleared_at = 0.0  # checkpoints sent before the last clear say nothing new
+        self._task: asyncio.Task[None] | None = None
         serializer.played = self._played
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
         if isinstance(frame, StartFrame):
-            self.create_task(self._checkpoints())
+            self._task = self.create_task(self._checkpoints())
+        elif isinstance(frame, (EndFrame, CancelFrame)) and self._task:
+            await self.cancel_task(self._task)
+            self._task = None
         await self.push_frame(frame, direction)
 
     async def _send(self, message: dict[str, str]) -> None:
@@ -52,9 +63,13 @@ class PlaybackGuard(FrameProcessor):
 
     async def _played(self, name: str) -> None:
         try:
-            lag = time.monotonic() - float(name)
+            sent = float(name)
         except ValueError:
             return
-        if lag > MAX_LAG_SECS:
+        lag = time.monotonic() - sent
+        # After a stalled connection releases, every queued checkpoint arrives late at once;
+        # one clear is enough, further clears would only cut the agent's fresh speech.
+        if lag > MAX_LAG_SECS and sent > self._cleared_at:
+            self._cleared_at = time.monotonic()
             await self._send({"event": "clearAudio", "streamId": str(self._serializer._stream_id)})
             await self._on_resync(lag)
