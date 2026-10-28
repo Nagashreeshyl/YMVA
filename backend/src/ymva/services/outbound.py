@@ -63,9 +63,9 @@ async def _check_public_address(provider: str) -> None:
         ok = False
     if not ok:
         raise CallSetupError(
-            f"{provider} can't reach YMVA: the public address {base} isn't answering (a "
-            "temporary tunnel expires after a while). Run ./ymva start --tunnel for a new one, "
-            "or set a permanent domain."
+            f"{provider} can't reach YMVA: the public address {base} isn't answering. A new "
+            "tunnel needs a minute to come online; an old one expires after a while. Try again "
+            "shortly, or run ./ymva start --tunnel for a new address (a domain is permanent)."
         )
     _reachable_at = time.monotonic()
 
