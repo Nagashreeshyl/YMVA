@@ -148,6 +148,8 @@ GREETING_WAIT_SECS = 3.0
 LIVE_GREETING_WAIT_SECS = 1.0
 # After the goodbye, the caller must stay quiet this long before the agent hangs up.
 HANG_UP_GRACE_SECS = 1.5
+# After a goodbye the caller talked over, the call ends once they're quiet this long.
+GOODBYE_AGAIN_GRACE_SECS = 4.0
 # Characters Sarvam collects before it starts speaking (default 50; 30 is its minimum), so the
 # voice starts after the model's first few words instead of a whole sentence later.
 TTS_START_CHARS = 30
@@ -216,6 +218,7 @@ class CallSession:
         self._live_llm: Any = None
         self._guard: LanguageGuard | None = None
         self._transferring = False
+        self._goodbye_reason: str | None = None
         self._to_live: TextToLive | None = None
         # Tool runs in this call: a repeat with the same details is not run again, and each
         # tool's memory lets a second save update the row this call added (see run_tool).
@@ -355,7 +358,7 @@ class CallSession:
         )
         await params.result_callback(result)
 
-    async def _hang_up_after_goodbye(self, reason: str) -> None:
+    async def _hang_up_after_goodbye(self, reason: str, grace: float = HANG_UP_GRACE_SECS) -> None:
         """Models sometimes call end_call too early. Let the agent finish speaking, then hang
         up only if the caller stays quiet for a moment; if they start talking, keep going."""
         assert self.task is not None
@@ -372,11 +375,14 @@ class CallSession:
             if self.conversation.state != "agent_speaking":
                 break
             await asyncio.sleep(0.1)
-        for _ in range(int(HANG_UP_GRACE_SECS * 10)):
+        for _ in range(int(grace * 10)):
             if self.conversation.state == "user_speaking":
                 await self.recorder.event(
                     CallEventType.STATUS, "Kept the call open: the caller was still talking"
                 )
+                # The agent already said goodbye; after its next reply, end the call if the
+                # caller then stays quiet (a real call sat 36 s in silence otherwise).
+                self._goodbye_reason = reason
                 return
             await asyncio.sleep(0.1)
         self._ended_by = "agent_ended"
@@ -685,6 +691,11 @@ class CallSession:
                 await self._to_live.say(message.content)
 
         async def _agent_turn(_: Any, message: Any) -> None:
+            if self._goodbye_reason and not message.interrupted:
+                reason, self._goodbye_reason = self._goodbye_reason, None
+                self._ending = asyncio.create_task(
+                    self._hang_up_after_goodbye(reason, grace=GOODBYE_AGAIN_GRACE_SECS)
+                )
             if message.content:
                 await self.recorder.event(
                     CallEventType.AGENT_TURN,
