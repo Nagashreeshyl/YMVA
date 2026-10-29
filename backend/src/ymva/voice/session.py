@@ -10,17 +10,21 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from google.genai.types import EndSensitivity, StartSensitivity, ThinkingConfig
+from google.genai.types import ThinkingConfig
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     EndWorkerFrame,
+    Frame,
     FunctionCallResultProperties,
+    InputTextRawFrame,
+    InterimTranscriptionFrame,
     LLMMessagesAppendFrame,
     LLMRunFrame,
     OutputTransportMessageUrgentFrame,
+    TranscriptionFrame,
     TTSAudioRawFrame,
     TTSSpeakFrame,
 )
@@ -33,15 +37,15 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
-from pipecat.processors.frame_processor import FrameProcessor
-from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService, GeminiVADParams
+from pipecat.processors.filters.function_filter import FunctionFilter
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.sarvam.stt import SarvamSTTService
 from pipecat.services.sarvam.tts import SarvamTTSService
 from pipecat.services.tts_service import TextAggregationMode
 from pipecat.transports.base_transport import BaseTransport
-from pipecat.turns.user_start import VADUserTurnStartStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from ymva.config import get_settings
@@ -161,32 +165,31 @@ def no_thinking(model: str) -> Any:
     return GoogleLLMService.ThinkingConfig(thinking_level="minimal", include_thoughts=False)
 
 
-# Who decides the caller has finished in Gemini Live: "gemini" (its built-in detection, inside
-# the model) or "ymva" (our voice detection + end-of-turn model, as in Standard mode).
-# Measured 28 Oct 2026, same simulated calls (Kannada, a short "haan", a switch to Hindi):
-# ymva heard "ಹೌದು, ನಾನೇ..." as "How do", missed "haan", replied in English, worst reply 16 s;
-# gemini heard every line in its own language, replied in it, typical 1.0-1.3 s, worst 2.7 s.
-LIVE_TURN_DETECTION = "gemini"
-# Silence that ends the caller's turn. 300 ms with high start sensitivity was worse: it misheard
-# Kannada and answered in English.
-LIVE_SILENCE_MS = 400
+# Gemini Live mode: Sarvam hears the caller and Gemini Live answers in its own voice. Gemini
+# Live's own hearing kept mishearing Indian languages on phone audio as Spanish or Korean
+# ("¿Cómo duele?" for "ಹಾ ಹೌದು ಹೇಳಿ"), then repeated itself; Sarvam got the same audio right, and
+# Gemini Live starts speaking ~0.5-0.8 s after receiving the text.
 
 
-def live_vad() -> GeminiVADParams:
-    if LIVE_TURN_DETECTION == "gemini":
-        return GeminiVADParams(
-            disabled=False,
-            start_sensitivity=StartSensitivity.START_SENSITIVITY_LOW,  # background stays out
-            end_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
-            prefix_padding_ms=200,
-            silence_duration_ms=LIVE_SILENCE_MS,
-        )
-    return GeminiVADParams(disabled=True)
+async def _not_caller_text(frame: Frame) -> bool:
+    # Gemini Live passes these on; the agent's transcript would take them as its own words.
+    return not isinstance(frame, (InputTextRawFrame, TranscriptionFrame, InterimTranscriptionFrame))
+
+
+class TextToLive(FrameProcessor):
+    """Hands the caller's finished turn to Gemini Live as text (realtime text input)."""
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        await self.push_frame(frame, direction)
+
+    async def say(self, text: str) -> None:
+        await self.push_frame(InputTextRawFrame(text=text))
 
 
 def required_providers(config: AgentConfig) -> set[str]:
     if config.mode == "gemini_live":
-        return {"google"}
+        return {"google", "sarvam"}
     return {
         config.pipeline.stt_provider,
         config.pipeline.llm_provider,
@@ -213,6 +216,7 @@ class CallSession:
         self._live_llm: Any = None
         self._guard: LanguageGuard | None = None
         self._transferring = False
+        self._to_live: TextToLive | None = None
         # Tool runs in this call: a repeat with the same details is not run again, and each
         # tool's memory lets a second save update the row this call added (see run_tool).
         self._tool_results: dict[tuple[str, str], dict[str, Any]] = {}
@@ -393,6 +397,15 @@ class CallSession:
 
         return [PlaybackGuard(serializer, resynced)]
 
+    def _stt(self) -> SarvamSTTService:
+        return SarvamSTTService(
+            api_key=self._key("sarvam"),
+            sample_rate=PIPELINE_SAMPLE_RATE,
+            # "codemix" keeps English words in English letters inside Kannada/Telugu/... text,
+            # the way people actually speak.
+            mode="codemix" if self.setup.config.speaking_style == "everyday_mix" else "transcribe",
+        )
+
     def _switchable(self) -> list[str]:
         """Languages the call may switch to: only the opening one when the agent keeps to it."""
         config = self.setup.config
@@ -421,14 +434,7 @@ class CallSession:
         user_params = LLMUserAggregatorParams(
             vad_analyzer=vad,
             user_idle_timeout=config.limits.silence_timeout_seconds,
-            user_turn_strategies=UserTurnStrategies(
-                # With Gemini's detection in charge, ours only marks turns for the transcript:
-                # two detectors both interrupting made Gemini cancel and restart replies (2-5 s).
-                start=[VADUserTurnStartStrategy(enable_interruptions=False)]
-                if config.mode == "gemini_live" and LIVE_TURN_DETECTION == "gemini"
-                else None,
-                stop=[turn_end],
-            ),
+            user_turn_strategies=UserTurnStrategies(stop=[turn_end]),
         )
 
         if config.mode == "gemini_live":
@@ -446,15 +452,13 @@ class CallSession:
                     # Native-audio models choose their reply language themselves; forcing a
                     # language code locks them into it, so it is deliberately not sent.
                     language=None,  # type: ignore[arg-type]
-                    vad=live_vad(),
                     # No reasoning before speaking: replies start about 0.2 s sooner. (Adding
                     # include_thoughts=False here stops Gemini answering the caller at all.)
                     thinking=ThinkingConfig(thinking_budget=0),
                 ),
                 tools=tools,
-                # Audio from just before our VAD notices speech; Pipecat's 0.3 s clipped short
-                # answers ("haudu" was heard as "audio").
-                user_audio_preroll_secs=0.6,
+                # Gemini gets the caller's words as text from Sarvam, never the audio.
+                start_audio_paused=True,
                 # The opening decides whether Gemini speaks first (see _open_live_mode).
                 inference_on_context_initialization=False,
             )
@@ -467,19 +471,26 @@ class CallSession:
                 llm.register_function(tool.name, self._run_tool)
             self._live_llm = llm
             context = LLMContext(messages=[])
-            pair = LLMContextAggregatorPair(context, user_params=user_params)
+            # Turns come from Sarvam's transcripts, as in Standard mode, not from Gemini.
+            pair = LLMContextAggregatorPair(
+                context, user_params=user_params, realtime_service_mode=False
+            )
             guard = LanguageGuard(
                 allowed=self._switchable(), initial=self.opening, on_switch=on_switch,
                 gemini_live=llm, auto=self.setup.config.follow_caller_language,
             )  # fmt: skip
+            self._to_live = TextToLive()
             pipeline = Pipeline(
                 [
                     self.transport.input(),
-                    pair.user(),
-                    # Gemini sends what the caller said back upstream, so the guard must sit
-                    # before the model to see it.
+                    self._stt(),
                     guard,
+                    pair.user(),
+                    self._to_live,
                     llm,
+                    # Gemini passes the caller's text on; it isn't the agent's words.
+                    # (input frames are "system" frames, which filters skip by default)
+                    FunctionFilter(filter=_not_caller_text, filter_system_frames=True),
                     LeadingSilenceTrimmer(),  # Gemini's voice can start with a beat of silence
                     *self._playback_guard(),
                     self.transport.output(),
@@ -490,13 +501,7 @@ class CallSession:
             return pipeline, context, GEMINI_OUTPUT_SAMPLE_RATE, guard, pair
 
         p = config.pipeline
-        stt = SarvamSTTService(
-            api_key=self._key("sarvam"),
-            sample_rate=PIPELINE_SAMPLE_RATE,
-            # "codemix" keeps English words in English letters inside Kannada/Telugu/... text,
-            # the way people actually speak.
-            mode="codemix" if config.speaking_style == "everyday_mix" else "transcribe",
-        )
+        stt = self._stt()
         # Main model plus a backup that takes over automatically if the main one fails.
         models = list(dict.fromkeys([p.llm_model, p.backup_llm_model]))
         llms: list[FrameProcessor] = [
@@ -676,6 +681,8 @@ class CallSession:
             await self.recorder.event(
                 CallEventType.USER_TURN, message.content, language=guard.current
             )
+            if self._to_live is not None and message.content:
+                await self._to_live.say(message.content)
 
         async def _agent_turn(_: Any, message: Any) -> None:
             if message.content:
@@ -735,10 +742,7 @@ class CallSession:
         else:
             # Gemini greets first: with the prepared greeting if ready, otherwise by itself.
             opening = asyncio.create_task(self._open_live_mode(context))
-            # Only when we decide turn ends: with Gemini's detection, "the caller has finished"
-            # is Gemini's call, and reconnecting while it still listens loses what was said.
-            if LIVE_TURN_DETECTION == "ymva":
-                watchdog = asyncio.create_task(self._watch_for_stalls())
+            watchdog = asyncio.create_task(self._watch_for_stalls())
 
         limit = asyncio.create_task(_limit())
         try:
