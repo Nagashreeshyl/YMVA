@@ -150,10 +150,11 @@ def prefetch(
     keys: dict[str, str],
     sample_rate: int,
 ) -> None:
-    """Start preparing the greeting audio in the background."""
-    if (config.mode == "gemini_live" and "google" not in keys) or (
-        config.mode == "pipeline" and "sarvam" not in keys
-    ):
+    """Start preparing the greeting audio in the background (Standard mode only).
+
+    Gemini Live says its greeting itself: the separate Gemini voice model used to prepare it
+    spoke with a foreign accent and sometimes read the accent instruction out loud."""
+    if config.mode == "gemini_live" or "sarvam" not in keys:
         return
     _prune()
     task = asyncio.create_task(_synthesize(config, variables, keys, sample_rate))
