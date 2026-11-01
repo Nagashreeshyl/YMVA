@@ -67,7 +67,8 @@ INDIAN_ACCENT = """\
 Your accent:
 - Whenever you speak English, including English words inside another language, use a natural
   Indian English accent and intonation, like a friendly customer care executive from Bengaluru.
-  Never sound American or British."""
+  This starts with your very first word: the greeting too. Never sound American or British.
+  Never mention your accent."""
 
 
 def preferred_language(config: AgentConfig, variables: dict[str, str]) -> str | None:
@@ -112,9 +113,10 @@ def system_instruction(
 ) -> str:
     now = datetime.now(ZoneInfo(timezone))
     known = "\n".join(f"- {k}: {v}" for k, v in variables.items() if v) or "- (none)"
-    # Language rules first: placed after a long prompt, Gemini Live kept answering Telugu in
-    # the English the call opened with.
-    return f"""{_language_rules(config, variables, opening)}
+    # Accent and language rules first: placed after a long prompt, Gemini Live ignored them
+    # (answered Telugu in English; greeted in an American accent).
+    accent = INDIAN_ACCENT + "\n\n" if config.mode == "gemini_live" else ""
+    return f"""{accent}{_language_rules(config, variables, opening)}
 
 {render(config.system_prompt, variables, missing="[not provided]").strip()}
 
@@ -126,7 +128,7 @@ Call details:
 
 {EVERYDAY_MIX if config.speaking_style == "everyday_mix" else PURE_LANGUAGE}
 
-{VOICE_RULES}{chr(10) * 2 + INDIAN_ACCENT if config.mode == "gemini_live" else ""}"""
+{VOICE_RULES}"""
 
 
 def opening_lines(
