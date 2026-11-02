@@ -69,8 +69,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      # Building needs no real secrets, but compose refuses to start without these set.
-      - run: docker compose build api web
+      # Building needs no real secrets, but compose refuses to start without .env and these set.
+      - run: touch .env && docker compose build api web
         env:
           POSTGRES_PASSWORD: ci-build-only
           REDIS_PASSWORD: ci-build-only
