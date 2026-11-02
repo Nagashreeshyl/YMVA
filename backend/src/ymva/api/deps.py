@@ -47,7 +47,14 @@ async def _user_from_api_key(db: AsyncSession, token: str) -> User | None:
     key.last_used_at = datetime.now(UTC)
     await db.commit()
     # API keys act as a synthetic, non-persisted user carrying the key's role.
-    return User(id=key.created_by_id, email=f"api-key:{key.name}", name=key.name, role=key.role)
+    return User(
+        id=key.created_by_id,
+        email=f"api-key:{key.name}",
+        name=key.name,
+        role=key.role,
+        is_active=True,
+        created_at=key.created_at,
+    )
 
 
 def is_api_key_header(auth: str) -> bool:

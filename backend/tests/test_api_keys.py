@@ -29,6 +29,8 @@ async def test_app_starts_a_call_with_a_caller_key(
     app = httpx.AsyncClient(
         transport=c._transport, base_url=str(c.base_url), headers={"authorization": f"Bearer {key}"}
     )
+    me = await app.get("/api/auth/me")  # n8n's credential test
+    assert me.status_code == 200 and me.json()["role"] == "caller", me.text
     agents = (await app.get("/api/agents")).json()
     assert [a["id"] for a in agents] == [setup["agent"]["id"]]
     # No from number: the only active one is used.
