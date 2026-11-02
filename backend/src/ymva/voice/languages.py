@@ -39,13 +39,17 @@ _STATES: dict[str, tuple[str, ...]] = {
     "ml": ("kerala", "kl", "lakshadweep"),
     "mr": ("maharashtra", "mh"),
     "bn": ("west bengal", "wb", "tripura"),
-    "gu": ("gujarat", "gj"),
+    "gu": (
+        "gujarat", "gj", "dadra and nagar haveli and daman and diu", "dadra and nagar haveli",
+        "daman and diu", "dn", "dd",
+    ),
     "pa": ("punjab", "pb"),
     "od": ("odisha", "orissa", "od", "or"),
     "hi": (
         "uttar pradesh", "up", "bihar", "br", "madhya pradesh", "mp", "rajasthan", "rj",
         "delhi", "new delhi", "dl", "haryana", "hr", "jharkhand", "jh", "chhattisgarh",
         "cg", "uttarakhand", "uk", "himachal pradesh", "hp", "chandigarh", "ch",
+        "jammu and kashmir", "jk", "ladakh", "la", "andaman and nicobar islands", "an",
     ),
 }  # fmt: skip
 

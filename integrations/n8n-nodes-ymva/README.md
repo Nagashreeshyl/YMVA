@@ -76,8 +76,9 @@ customer's phone, State and Language are filled in by YMVA and aren't listed.
 
 ### Language: State or Language
 
-In **Additional Fields**, set **State** (e.g. `{{ $json.state }}`) and the call opens in
-that state's language: Karnataka/KA → Kannada, Tamil Nadu/TN → Tamil, Andhra
+In **Additional Fields**, pick the customer's **State** from the dropdown (every state and
+union territory, with the language it opens in), or switch it to *Expression* to map it
+from earlier data (e.g. `{{ $json.state }}`). The call opens in that state's language: Karnataka/KA → Kannada, Tamil Nadu/TN → Tamil, Andhra
 Pradesh/Telangana → Telugu, Kerala → Malayalam, Maharashtra → Marathi, UP, Bihar, MP,
 Rajasthan, Delhi… → Hindi, and so on. Full names, short codes and loose spellings all work.
 **Language** picks it directly and wins over State. The agent must have that language
