@@ -195,3 +195,25 @@ async def test_caller_who_asks_not_to_be_called_waits_for_admin_approval(
     assert blocked.status_code == 400 and "do-not-call" in blocked.json()["detail"]
     again = await admin_client.post("/api/do-not-call/+919845077777/approve")
     assert again.status_code == 404  # only waiting numbers can be approved
+
+
+async def test_analysis_is_retried_when_gemini_is_busy(
+    admin_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, _fake_gemini: list[str]
+) -> None:
+    await admin_client.put("/api/integrations/ai/google", json={"api_key": "AIza-google-12345678"})
+    answer = analysis.ask_gemini
+    tries: list[int] = []
+
+    async def busy_once(*args: Any) -> Any:
+        tries.append(1)
+        if len(tries) == 1:
+            raise RuntimeError("503 every model busy")
+        return await answer(*args)
+
+    monkeypatch.setattr(analysis, "ask_gemini", busy_once)
+    monkeypatch.setattr(analysis, "ANALYSIS_RETRY_SECS", 0)
+    call_id = await _call([(CallEventType.USER_TURN, "Yes, I'll pay on the 20th.")])
+    await analysis.analyze_call(call_id)
+    async with get_sessionmaker()() as db:
+        assert (await db.get(Call, call_id)).outcome == "Promised to pay"  # type: ignore[union-attr]
+    assert len(tries) == 2

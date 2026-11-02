@@ -88,7 +88,9 @@ def test_system_instruction_has_date_and_language_rules() -> None:
     )
     assert "Ramesh" in text and "{{customer_name}}" not in text
     assert "Start in Kannada" in text
-    assert "Today is" in text
+    # A mis-scripted transcript or "I don't understand Telugu" must not send it guessing.
+    assert "wrong script" in text and "which language they're comfortable with" in text
+    assert "why you are calling" in text and "more than twice" in text
     assert "end_call" in text
 
 

@@ -26,6 +26,8 @@ from ymva.voice.config import AgentConfig, Analysis
 log = get_logger(__name__)
 
 NO_CONVERSATION = "No conversation"
+ANALYSIS_ATTEMPTS = 3
+ANALYSIS_RETRY_SECS = 10.0
 OTHER = "Other"
 
 SYSTEM = """\
@@ -123,20 +125,25 @@ async def analyze_call(call_id: uuid.UUID) -> None:
         if "google" not in keys:
             return
         model = _result_model(analysis)
-        try:
-            result = await ask_gemini(
-                keys["google"],
-                SYSTEM,
-                [
-                    types.Content(
-                        role="user", parts=[types.Part(text=_prompt(call, analysis, transcript))]
-                    )
-                ],
-                model,
-            )
-        except Exception as exc:
-            log.warning("call analysis failed", call_id=str(call_id), error=str(exc)[:300])
-            return
+        contents = [
+            types.Content(role="user", parts=[types.Part(text=_prompt(call, analysis, transcript))])
+        ]
+        # Gemini is sometimes briefly busy for every model; a call left without an outcome
+        # also sends an empty result to the app that started it, so wait and try again.
+        for attempt in range(ANALYSIS_ATTEMPTS):
+            try:
+                result = await ask_gemini(keys["google"], SYSTEM, contents, model)
+                break
+            except Exception as exc:
+                log.warning(
+                    "call analysis failed",
+                    call_id=str(call_id),
+                    attempt=attempt + 1,
+                    error=str(exc)[:300],
+                )
+                if attempt + 1 == ANALYSIS_ATTEMPTS:
+                    return
+                await asyncio.sleep(ANALYSIS_RETRY_SECS)
         data = result.model_dump()
         call.summary = data["summary"].strip()[:2000]
         call.outcome = data["outcome"]
