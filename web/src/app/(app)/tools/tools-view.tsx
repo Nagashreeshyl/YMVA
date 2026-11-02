@@ -49,7 +49,7 @@ import { useMe } from "@/lib/session";
 
 type Draft = Omit<
   ToolDef,
-  "id" | "has_secrets" | "secret_hint" | "used_by" | "updated_at"
+  "id" | "has_secrets" | "secret_hint" | "used_by" | "missing" | "updated_at"
 >;
 
 const NEW_SHEET: SheetsToolConfig = {

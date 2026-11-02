@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from tests.fake_sheets import FakeSheets
+from ymva.services import tool_builder
 from ymva.services import tools as tools_service
 
 SERVICE_ACCOUNT = {
@@ -165,7 +166,6 @@ async def test_tool_names_and_deletion_rules(admin_client: httpx.AsyncClient) ->
 async def test_tool_builder_returns_a_form_to_review(
     admin_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from ymva.api.routes import tools as tools_route
     from ymva.services import integrations as integrations_service
 
     async def ask(api_key: str, system: str, contents: list[Any], schema: type) -> Any:
@@ -192,7 +192,7 @@ async def test_tool_builder_returns_a_form_to_review(
     async def verify_ai_key(*_: Any) -> None:
         return None
 
-    monkeypatch.setattr(tools_route, "ask_gemini", ask)
+    monkeypatch.setattr(tool_builder, "ask_gemini", ask)
     monkeypatch.setattr(integrations_service, "verify_ai_key", verify_ai_key)
     await admin_client.put("/api/integrations/ai/google", json={"api_key": "AIza-google-12345678"})
     resp = await admin_client.post(

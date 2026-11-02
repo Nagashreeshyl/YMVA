@@ -314,6 +314,8 @@ export interface ToolDef {
   secret_hint: string | null;
   is_active: boolean;
   used_by: string[];
+  /** Still needed before it can run: the sheet "link", the API "address" or its "key". */
+  missing: ("link" | "address" | "key")[];
   updated_at: string;
 }
 

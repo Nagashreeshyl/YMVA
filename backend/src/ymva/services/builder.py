@@ -91,10 +91,22 @@ class AgentSpec(BaseModel):
     )
 
 
+class ToolRequest(BaseModel):
+    name: str = Field(description="An existing tool's name to change it, or a new snake_case name")
+    request: str = Field(
+        description="What the tool must do, or what to change, in plain words: when the agent "
+        "uses it, what it saves or looks up, and any sheet link, columns or API address the "
+        "admin gave. Never a key, token or password."
+    )
+
+
 class AssistantResult(BaseModel):
     reply: str = Field(description="Short, plain-language answer to the admin")
     changes: list[str] = Field(description="What changed, one short line each; empty if none")
     agent: AgentSpec | None = Field(description="The full updated agent, or null if unchanged")
+    tools: list[ToolRequest] = Field(
+        default_factory=list, description="Tools to create or change; empty if none"
+    )
 
 
 def _voices() -> str:
@@ -200,6 +212,14 @@ The admin asks you to change the agent or asks questions about it.
   saved or written down, change those lists, not the instructions. Name such changes like
   "Outcome added: Appointment booked", "Detail removed: Paid on".
 - If you add a {{variable}}, add it to variables too; if you stop using one, remove it.
+- Tools let the agent act during or after a call: save to a Google Sheet, look something up,
+  call the company's API or database. When the admin wants the agent to do such a thing, put
+  it in "tools" (a new tool, or an existing tool's name to change it), and say in the
+  instructions when the agent uses it. The tool is created and switched on for this agent
+  for you; don't list it in "changes" yourself. A sheet link, column names or an API address
+  the admin types go into the tool's request.
+- Never ask the admin to type a key, token or password in the chat. When a tool needs one,
+  say a secure key field appears below the chat for it.
 - The admin's edits are saved as a draft; they still test and publish themselves."""
 
 
@@ -333,14 +353,17 @@ async def edit_agent(
     history: list[tuple[str, str]],
     message: str,
     api_key: str,
+    tools: str = "",
 ) -> tuple[AssistantResult, AgentConfig | None]:
-    """One assistant turn. Returns the reply and the updated config (None if unchanged)."""
+    """One assistant turn. Returns the reply and the updated config (None if unchanged).
+    `tools` describes the tools that exist, so the assistant can reuse or change them."""
     current = to_spec(config, name, description)
     contents = [_text("user" if role == "user" else "model", text) for role, text in history]
     contents.append(
         _text(
             "user",
             f"Current agent:\n{json.dumps(current.model_dump(), ensure_ascii=False)}\n\n"
+            f"Tools that exist:\n{tools or '(none)'}\n\n"
             f"Admin: {message}",
         )
     )
@@ -348,7 +371,7 @@ async def edit_agent(
     for _ in range(2):
         result = await ask_gemini(api_key, system, contents, AssistantResult)
         if result.agent is None or result.agent == current:
-            return result.model_copy(update={"agent": None, "changes": []}), None
+            return result.model_copy(update={"agent": None}), None
         try:
             return result, from_spec(result.agent, config)
         except ValidationError as error:

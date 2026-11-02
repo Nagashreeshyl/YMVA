@@ -1,5 +1,6 @@
 """Build with AI: create an agent from a description, and the assistant chat that edits it."""
 
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -17,18 +18,22 @@ from ymva.models import (
     Call,
     CallEvent,
     CallEventType,
+    Tool,
 )
+from ymva.permissions import Perm, can
 from ymva.redis import get_redis
 from ymva.services import audit, ratelimit
 from ymva.services.builder import (
     INTERVIEWER_NAME,
     BuilderError,
+    ToolRequest,
     brief_from_interview,
     edit_agent,
     generate_agent,
 )
 from ymva.services.integrations import load_ai_keys
-from ymva.voice.config import AgentConfig
+from ymva.services.tool_builder import apply_draft, draft_tool, missing, tool_by_name
+from ymva.voice.config import AgentConfig, call_details
 from ymva.voice.templates import blank
 
 router = APIRouter(prefix="/agents", tags=["builder"])
@@ -187,6 +192,75 @@ async def generate(
     return await _detail(db, agent)
 
 
+def _tool_line(tool: Tool) -> str:
+    needs = missing(tool)
+    state = f"still needs: {', '.join(needs)}" if needs else "ready"
+    return f"- {tool.name} ({tool.type.value}, {state}): {tool.description}"
+
+
+NEEDS_WORDS = {
+    "link": "paste the Google Sheet's link here",
+    "address": "tell me the API's address",
+    "key": "add its key in the secure field below the chat",
+}
+
+
+async def _make_tools(
+    db: DbSession,
+    admin: AgentEditor,
+    request: Request,
+    key: str,
+    requests: list[ToolRequest],
+    config: AgentConfig,
+) -> tuple[AgentConfig, list[str], list[str]]:
+    """Create or change the tools YMA asked for and switch them on for this agent. Returns the
+    agent with its tools, a change line per tool, and what the admin must still give."""
+    if not can(admin.role, Perm.TOOLS_MANAGE):
+        return config, [], ["Setting up tools needs an admin; ask one to add it on the Tools page."]
+    names, changes, notes = list(config.tools), [], []
+    known = [d.name for d in call_details(config)]
+    for asked in requests[:5]:
+        name = re.sub(r"[^a-z0-9_]+", "_", asked.name.strip().lower()).strip("_")[:64]
+        tool = await tool_by_name(db, name) if name else None
+        try:
+            draft = await draft_tool(key, asked.request, known, tool)
+        except BuilderError:
+            notes.append(f"I couldn't set up the {name or 'new'} tool; try describing it again.")
+            continue
+        if tool is None:
+            # The name YMA chose is the one its instructions tell the agent to use.
+            draft["name"] = name or re.sub(r"[^a-z0-9_]+", "_", draft["name"]).strip("_")[:60]
+            if not re.match(r"^[a-z][a-z0-9_]{1,63}$", draft["name"]):
+                draft["name"] = f"tool_{draft['name']}"[:64].rstrip("_") or "tool"
+            if await tool_by_name(db, draft["name"]) is not None:
+                draft["name"] = f"{draft['name'][:58]}_{uuid.uuid4().hex[:5]}"
+            tool = Tool(created_by_id=admin.id)
+            apply_draft(tool, draft)
+            db.add(tool)
+            await db.flush()
+            changes.append(f"Tool created: {tool.name}")
+            action = "tool.create"
+        else:
+            apply_draft(tool, draft)  # its key, if any, is kept
+            changes.append(f"Tool updated: {tool.name}")
+            action = "tool.update"
+        await audit.record(
+            db,
+            actor=admin,
+            action=action,
+            entity_type="tool",
+            entity_id=tool.id,
+            summary=f"YMA set up tool '{tool.name}' for agent use",
+            ip_address=client_ip(request),
+        )
+        if tool.name not in names:
+            names.append(tool.name)
+        if needs := missing(tool):
+            todo = " and ".join(NEEDS_WORDS[n] for n in needs)
+            notes.append(f"To finish {tool.name}, {todo}; it stays off until then.")
+    return config.model_copy(update={"tools": names}), changes, notes
+
+
 @router.get("/{agent_id}/assistant", response_model=list[AssistantMessageOut])
 async def assistant_history(
     agent_id: uuid.UUID, _: AgentViewer, db: DbSession
@@ -207,6 +281,7 @@ async def assistant_turn(
     latest = await _latest(db, agent.id)
     before = _current_config(agent, latest)
     history = [(m.role, m.content) for m in (await _messages(db, agent.id))[-HISTORY_MESSAGES:]]
+    existing_tools = list(await db.scalars(select(Tool).order_by(Tool.name)))
     try:
         result, updated = await edit_agent(
             config=AgentConfig.model_validate(before),
@@ -215,9 +290,15 @@ async def assistant_turn(
             history=history,
             message=body.message,
             api_key=key,
+            tools="\n".join(_tool_line(t) for t in existing_tools),
         )
     except BuilderError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    tool_changes, tool_notes = [], []
+    if result.tools:
+        updated, tool_changes, tool_notes = await _make_tools(
+            db, admin, request, key, result.tools, updated or AgentConfig.model_validate(before)
+        )
 
     asked = AgentAssistantMessage(
         agent_id=agent.id, role="user", content=body.message, created_by_id=admin.id
@@ -228,8 +309,8 @@ async def assistant_turn(
     answer = AgentAssistantMessage(
         agent_id=agent.id,
         role="assistant",
-        content=result.reply,
-        changes=result.changes if after is not None else [],
+        content=" ".join([result.reply, *tool_notes]),
+        changes=[*result.changes, *tool_changes] if after is not None else [],
         config_before=before if after is not None else None,
         config_after=after,
     )

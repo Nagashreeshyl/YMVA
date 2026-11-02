@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Check, Undo2 } from "lucide-react";
 import { Buddy } from "@/components/buddy";
+import { ToolKeys } from "./tool-keys";
 import { useEffect, useRef, useState } from "react";
 import { Button, ErrorNotice, Skeleton } from "@/components/ui";
 import { api, type AgentDetail, type AssistantMessage, type AssistantTurn } from "@/lib/api";
@@ -50,6 +51,10 @@ export function Assistant({
         ...turn.messages,
       ]);
       if (turn.messages[1].changes.length) onChanged(turn.agent);
+      // YMA may have created or changed tools: their key fields show from the tool list.
+      if (turn.messages[1].changes.some((c) => c.startsWith("Tool "))) {
+        queryClient.invalidateQueries({ queryKey: ["tools"] });
+      }
     },
   });
   const undo = useMutation({
@@ -127,9 +132,7 @@ export function Assistant({
           history.data.map((m) => (
             <li key={m.id} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
               {m.role === "user" ? (
-                <p className="max-w-[85%] rounded-2xl rounded-br-md bg-ink px-3.5 py-2 text-[13px] whitespace-pre-wrap text-on-ink">
-                  {m.content}
-                </p>
+                <UserMessage text={m.content} />
               ) : (
                 <div className="flex max-w-[92%] gap-2.5">
                   <Buddy yma size={22} className="mt-0.5" />
@@ -174,6 +177,7 @@ export function Assistant({
             </li>
           ))
         )}
+        <ToolKeys toolNames={agent.config.tools ?? []} />
         {send.isPending && (
           <>
             <li className="flex justify-end">
@@ -244,5 +248,28 @@ export function Assistant({
         {busy && <p className="mt-1.5 px-1 text-2xs text-muted">Saving your edits first…</p>}
       </form>
     </section>
+  );
+}
+
+/** A long message (like a talked-through interview) starts folded so the chat stays readable. */
+function UserMessage({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > 400;
+  return (
+    <div className="flex max-w-[85%] flex-col items-end gap-1">
+      <p
+        className={cn(
+          "rounded-2xl rounded-br-md bg-ink px-3.5 py-2 text-[13px] whitespace-pre-wrap text-on-ink",
+          long && !open && "line-clamp-4",
+        )}
+      >
+        {text}
+      </p>
+      {long && (
+        <button type="button" onClick={() => setOpen(!open)} className="text-2xs text-muted underline underline-offset-4">
+          {open ? "Show less" : "Show all"}
+        </button>
+      )}
+    </div>
   );
 }

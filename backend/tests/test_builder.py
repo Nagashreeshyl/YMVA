@@ -196,3 +196,86 @@ async def test_agent_is_built_from_a_talked_through_conversation(
 
     # Nothing to build from: neither a description nor a conversation.
     assert (await admin_client.post("/api/agents/generate", json={})).status_code == 400
+
+
+async def test_yma_creates_a_tool_and_asks_for_its_key_securely(
+    admin_client: httpx.AsyncClient, _fake_gemini: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.test_tools import SERVICE_ACCOUNT
+    from ymva.services import tool_builder
+    from ymva.services.builder import ToolRequest
+    from ymva.services.tool_builder import GeneratedTool
+
+    monkeypatch.setattr(tool_builder, "ask_gemini", builder.ask_gemini)  # same fake queue
+    c = admin_client
+    await _with_key(c)
+    agent = (
+        await c.post("/api/agents", json={"name": "Reminder", "template": "interest_reminder"})
+    ).json()
+
+    def sheet_tool(link: str = "") -> GeneratedTool:
+        return GeneratedTool(
+            name="save_payment_promise",
+            description="Use when the customer says when they will pay.",
+            type="google_sheets",
+            params=[{"name": "promised_date", "description": "YYYY-MM-DD", "required": True}],
+            sheet_action="append_row",
+            sheet_columns=[{"header": "Promised date", "value": "{{promised_date}}"}],
+            sheet_match_column="",
+            sheet_match_value="",
+            sheet_link=link,
+            http_method="POST",
+            http_url="",
+            http_body="",
+            db_query="",
+            db_mode="read",
+        )
+
+    ask = "Save the date they promise to pay in our Google Sheet."
+    _fake_gemini.extend(
+        [
+            AssistantResult(
+                reply="I'll save promised dates to your sheet.",
+                changes=[],
+                agent=None,
+                tools=[ToolRequest(name="save_payment_promise", request=ask)],
+            ),
+            sheet_tool(),
+        ]
+    )
+    turn = (await c.post(f"/api/agents/{agent['id']}/assistant", json={"message": ask})).json()
+    answer = turn["messages"][1]
+    assert answer["changes"] == ["Tool created: save_payment_promise"]
+    assert (
+        "paste the Google Sheet's link" in answer["content"] and "secure field" in answer["content"]
+    )
+    assert "save_payment_promise" in turn["agent"]["config"]["tools"]
+    tool = (await c.get("/api/tools")).json()[0]
+    assert not tool["is_active"] and tool["missing"] == ["link", "key"]  # off until complete
+
+    # The key goes straight to the tool, never into the chat.
+    keyed = await c.put(
+        f"/api/tools/{tool['id']}/secrets", json={"secrets": {"service_account": SERVICE_ACCOUNT}}
+    )
+    assert keyed.status_code == 200, keyed.text
+    assert keyed.json()["missing"] == ["link"] and not keyed.json()["is_active"]
+    history = (await c.get(f"/api/agents/{agent['id']}/assistant")).json()
+    assert all(SERVICE_ACCOUNT["private_key"] not in m["content"] for m in history)
+
+    # The link typed in the chat finishes it, and it switches on.
+    link = "https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz/edit"
+    _fake_gemini.extend(
+        [
+            AssistantResult(
+                reply="Added the link.",
+                changes=[],
+                agent=None,
+                tools=[ToolRequest(name="save_payment_promise", request=f"Sheet link: {link}")],
+            ),
+            sheet_tool(link),
+        ]
+    )
+    turn = (await c.post(f"/api/agents/{agent['id']}/assistant", json={"message": link})).json()
+    assert turn["messages"][1]["changes"] == ["Tool updated: save_payment_promise"]
+    tool = (await c.get("/api/tools")).json()[0]
+    assert tool["is_active"] and tool["missing"] == [] and tool["has_secrets"]

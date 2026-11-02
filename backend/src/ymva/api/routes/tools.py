@@ -6,7 +6,6 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request, status
-from google.genai import types
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import select
 
@@ -17,8 +16,9 @@ from ymva.models import Agent, AgentVersion, Tool, ToolType
 from ymva.redis import get_redis
 from ymva.security import decrypt_json, encrypt_json
 from ymva.services import audit, ratelimit
-from ymva.services.builder import BuilderError, ask_gemini
+from ymva.services.builder import BuilderError
 from ymva.services.integrations import load_ai_keys
+from ymva.services.tool_builder import draft_tool, missing
 from ymva.services.tools import (
     CONFIG_TYPES,
     RESERVED_NAMES,
@@ -29,7 +29,6 @@ from ymva.services.tools import (
     ToolParam,
     call_facts,
     mcp_tools,
-    placeholders,
     run_tool,
     secret_hint,
     with_agent_details,
@@ -72,6 +71,8 @@ class ToolOut(BaseModel):
     secret_hint: str | None
     is_active: bool
     used_by: list[str]
+    # What the admin still has to give: "link", "address" or "key" (see tool_builder.missing).
+    missing: list[str] = []
     updated_at: datetime
 
 
@@ -123,6 +124,7 @@ def _out(tool: Tool, used_by: dict[str, list[str]]) -> ToolOut:
         secret_hint=secret_hint(tool.type.value, _secrets(tool)),
         is_active=tool.is_active,
         used_by=sorted(used_by.get(tool.name, [])),
+        missing=missing(tool),
         updated_at=tool.updated_at,
     )
 
@@ -268,6 +270,38 @@ async def update_tool(
     return _out(tool, used_by)
 
 
+class SecretsIn(BaseModel):
+    secrets: dict[str, Any]
+
+
+@router.put("/{tool_id}/secrets", response_model=ToolOut)
+async def set_tool_secrets(
+    tool_id: uuid.UUID, body: SecretsIn, request: Request, admin: ToolManager, db: DbSession
+) -> ToolOut:
+    """Just a tool's key (the secure field in YMA's chat): it goes straight to encrypted
+    storage, never into the chat or the AI. A tool with nothing else missing switches on."""
+    tool = await _get(db, tool_id)
+    try:
+        secrets = SECRET_TYPES[tool.type.value].model_validate(body.secrets).model_dump()
+    except ValidationError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, _problems(exc)) from exc
+    tool.encrypted_secrets = encrypt_json(secrets)
+    if not missing(tool):
+        tool.is_active = True
+    await audit.record(
+        db,
+        actor=admin,
+        action="tool.secrets",
+        entity_type="tool",
+        entity_id=tool.id,
+        summary=f"Added the key for tool '{tool.name}'",
+        ip_address=client_ip(request),
+    )
+    await db.commit()
+    await db.refresh(tool)
+    return _out(tool, await _used_by(db))
+
+
 @router.delete("/{tool_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tool(
     tool_id: uuid.UUID, request: Request, admin: ToolManager, db: DbSession
@@ -342,52 +376,6 @@ async def discover_mcp_tools(
 # ---- Tool Builder ----------------------------------------------------------------------------
 
 
-class GeneratedColumn(BaseModel):
-    header: str
-    value: str
-
-
-class GeneratedTool(BaseModel):
-    name: str = Field(description="snake_case, e.g. save_payment_promise")
-    description: str = Field(description="When the agent should use it, for the agent")
-    # MCP tools come from the server's own list (Load tools), not from a description.
-    type: Literal["google_sheets", "http", "database"]
-    params: list[ToolParam]
-    sheet_action: Literal["append_row", "find_row"]
-    sheet_columns: list[GeneratedColumn]
-    sheet_match_column: str
-    sheet_match_value: str
-    http_method: Literal["GET", "POST", "PUT", "PATCH"]
-    http_url: str
-    http_body: str
-    db_query: str
-    db_mode: Literal["read", "write"]
-
-
-BUILDER_GUIDE = """\
-You set up tools that a phone voice agent for Yellow Metal (a gold loan company in India) uses
-during calls. Turn the admin's description into one tool.
-- type "google_sheets" to add a row to a sheet (append_row) or read one row (find_row);
-  "http" to call a web API (CRM, webhook, Apps Script); "database" to run one PostgreSQL
-  query (db_query, with {{placeholders}} where values go, e.g.
-  select interest_due from loans where loan_id = {{loan_id}}; db_mode "read" unless it
-  changes data). Never guess table names you weren't told: use clear placeholder names.
-- params: only what the agent must get from the caller during the call (snake_case, a clear
-  description including the format, e.g. "Date the customer will pay, as YYYY-MM-DD").
-- Values may use {{param}} placeholders, the call's customer details (e.g. {{customer_name}},
-  {{loan_id}}, {{due_amount}}) and call facts {{call_date}}, {{call_time}}, {{customer_phone}}.
-- sheet_columns: header = the sheet's column title, value = what goes in it. For find_row set
-  sheet_match_column (the column to search) and sheet_match_value (e.g. {{loan_id}}).
-- For http, http_url is the address if the admin gave one, else "https://example.com"; keep
-  http_body empty unless a specific JSON shape was asked for. Never invent secrets.
-- If the tool should run after the call to record its results (not during the call), it
-  needs no params and may use {{summary}}, {{outcome}}, {{duration_seconds}}, {{agent_name}}
-  and the call's details in snake_case, e.g. {{promised_payment_date}}, {{paid_on}},
-  {{call_back_at}}, {{reason_for_difficulty}}.
-- description tells the agent exactly when to use the tool, in one or two sentences.
-Fill fields of the other type with empty values."""
-
-
 @router.post("/generate")
 async def generate_tool(body: GenerateIn, admin: ToolManager, db: DbSession) -> dict[str, Any]:
     """Draft a tool from a plain-English description. Nothing is saved: the admin reviews the
@@ -397,44 +385,12 @@ async def generate_tool(body: GenerateIn, admin: ToolManager, db: DbSession) -> 
     keys = await load_ai_keys(db)
     if "google" not in keys:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Add the Google (Gemini) API key first")
-    request = body.description
+    request, known = body.description, []
     if body.agent_id is not None:
         agent, agent_config = await _agent_config(db, body.agent_id)
         known = detected_variables(AgentConfig.model_validate(agent_config))
-        request += (
-            f"\n\nThe tool is for the agent '{agent.name}'. Customer details it already has"
-            f" for every call (use these exact names): "
-            + (", ".join(f"{{{{{v}}}}}" for v in known) or "none")
-        )
-    content = types.Content(role="user", parts=[types.Part(text=request)])
+        request += f"\n\nThe tool is for the agent '{agent.name}'."
     try:
-        draft = await ask_gemini(keys["google"], BUILDER_GUIDE, [content], GeneratedTool)
+        return await draft_tool(keys["google"], request, known)
     except BuilderError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
-    if draft.type == "google_sheets":
-        config: dict[str, Any] = {
-            "spreadsheet": "",
-            "sheet": "Sheet1",
-            "action": draft.sheet_action,
-            "columns": [c.model_dump() for c in draft.sheet_columns],
-            "match_column": draft.sheet_match_column,
-            "match_value": draft.sheet_match_value,
-        }
-    elif draft.type == "database":
-        config = {"query": draft.db_query, "mode": draft.db_mode}
-    else:
-        config = {
-            "method": draft.http_method,
-            "url": draft.http_url,
-            "headers": {},
-            "body": draft.http_body,
-        }
-    name = draft.name.strip().lower()[:64]
-    return {
-        "name": name if name not in RESERVED_NAMES else f"{name}_tool",
-        "description": draft.description,
-        "type": draft.type,
-        "config": config,
-        "params": [p.model_dump() for p in draft.params],
-        "placeholders": placeholders(config),
-    }
