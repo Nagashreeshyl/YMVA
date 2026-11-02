@@ -133,7 +133,7 @@ async def test_undo_refused_after_manual_edit(
     edited = to_spec(AgentConfig.model_validate(agent["config"]), "Reminder", "")
     _fake_gemini.append(
         AssistantResult(
-            reply="Done.", changes=["Pace"], agent=edited.model_copy(update={"mode": "gemini_live"})
+            reply="Done.", changes=["Pace"], agent=edited.model_copy(update={"mode": "pipeline"})
         )
     )
     turn = (

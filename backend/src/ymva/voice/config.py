@@ -190,7 +190,7 @@ class CallLimits(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    mode: Literal["pipeline", "gemini_live"] = "pipeline"
+    mode: Literal["pipeline", "gemini_live"] = "gemini_live"  # the main mode; pipeline = Standard
     # "everyday_mix": talk like people actually do (Kanglish, Tenglish, Hinglish).
     # "pure": formal, single-language speech.
     speaking_style: Literal["everyday_mix", "pure"] = "everyday_mix"

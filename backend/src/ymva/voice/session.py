@@ -157,6 +157,8 @@ LLM_RETRY_AFTER_SECS = 2.0
 # Gemini Live: caller finished but no reply or tool use for this long counts as a stall.
 STALL_SECS = 5.0
 MAX_STALL_RECOVERIES = 3
+# Gemini Live: once connected, the agent should start its opening within this long.
+OPENING_REPLY_SECS = 3.0
 LLM_GIVE_UP_AFTER_SECS = 5.0
 
 
@@ -598,6 +600,24 @@ class CallSession:
         context.add_message({"role": "user", "content": self._live_kickoff()})
         self._live_llm._inference_on_context_initialization = True
         await self.task.queue_frame(LLMRunFrame())
+        await self._ensure_opening()
+
+    async def _ensure_opening(self) -> None:
+        """Gemini sometimes connects but never starts the greeting, and the caller hears
+        nothing until they speak. If it hasn't started shortly after connecting, ask again."""
+        llm = self._live_llm
+        try:
+            await asyncio.wait_for(llm._ready.wait(), timeout=20)
+        except TimeoutError:
+            return  # never connected: reported as an error elsewhere
+        for _ in range(2):
+            deadline = time.monotonic() + OPENING_REPLY_SECS
+            while time.monotonic() < deadline:
+                if self.conversation.agent_replied or self.conversation.state != "listening":
+                    return  # the agent is greeting, or the caller spoke first
+                await asyncio.sleep(0.2)
+            await llm.recover_opening()
+            await asyncio.wait_for(llm._ready.wait(), timeout=20)
 
     async def _play_prepared(self, ready: greeting.GreetingAudio, context: LLMContext) -> None:
         assert self.task is not None

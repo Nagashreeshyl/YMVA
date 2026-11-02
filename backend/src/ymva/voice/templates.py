@@ -29,7 +29,7 @@ Rules:
 
 def interest_reminder() -> AgentConfig:
     return AgentConfig(
-        mode="pipeline",
+        mode="gemini_live",
         system_prompt=INTEREST_REMINDER_PROMPT,
         greetings={
             "en": "Hello! This is Priya from Yellow Metal. Am I speaking with {{customer_name}}?",

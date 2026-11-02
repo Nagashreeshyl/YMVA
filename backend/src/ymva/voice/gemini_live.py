@@ -17,6 +17,10 @@ REPEAT_NOTE = (
     "Politely ask them to say it again, briefly, in the language of the conversation.]"
 )
 
+OPENING_NOTE = (
+    "[The call is connected and the caller is waiting in silence. Say your opening now, "
+    "exactly as instructed above.]"
+)
 
 # Gemini Live normally connects in about a second; once it took 13.5 s and the caller heard
 # silence. A fresh attempt is usually quick, so a slow one is abandoned after this long.
@@ -52,6 +56,12 @@ class ResilientGeminiLive(GeminiLiveLLMService):
         with the conversation so far, asking the caller to repeat, gets the call going again."""
         logger.warning(f"{self}: no reply to the caller; reconnecting")
         self._note_after_reconnect = REPEAT_NOTE
+        await self._reconnect()
+
+    async def recover_opening(self) -> None:
+        """Gemini occasionally connects but never starts the opening; ask again, fresh."""
+        logger.warning(f"{self}: no opening from the agent; reconnecting")
+        self._note_after_reconnect = OPENING_NOTE
         await self._reconnect()
 
     async def _connection_task_handler(self, config: Any) -> None:

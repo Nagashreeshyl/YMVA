@@ -127,7 +127,7 @@ async def test_agent_versions_and_publishing(admin_client: httpx.AsyncClient) ->
     assert agent["latest_version"] == 1 and agent["published_version"] is None
     assert agent["config"]["languages"] == ["en", "kn", "te", "hi", "ta"]
 
-    config = agent["config"] | {"mode": "gemini_live"}
+    config = agent["config"] | {"mode": "pipeline"}
     saved = (
         await admin_client.post(
             f"/api/agents/{agent['id']}/versions", json={"config": config, "note": "try live"}
@@ -135,7 +135,7 @@ async def test_agent_versions_and_publishing(admin_client: httpx.AsyncClient) ->
     ).json()
     assert (
         saved["latest_version"] == 2
-        and saved["mode"] == "gemini_live"
+        and saved["mode"] == "pipeline"
         and saved["has_unpublished_changes"]
     )
 
@@ -299,15 +299,14 @@ async def test_editor_saves_drafts_without_creating_versions(
 ) -> None:
     agent = (await admin_client.post("/api/agents", json={"name": "Drafts"})).json()
     aid = agent["id"]
-    config = agent["config"] | {"mode": "gemini_live"}
+    config = agent["config"] | {"mode": "pipeline"}
 
     for temperature in (0.3, 0.5, 0.7):  # several edits in a row
         config["pipeline"]["temperature"] = temperature
         draft = (await admin_client.put(f"/api/agents/{aid}/draft", json={"config": config})).json()
     assert draft["latest_version"] == 1 and draft["has_draft_changes"]
     assert (
-        draft["config"]["mode"] == "gemini_live"
-        and draft["config"]["pipeline"]["temperature"] == 0.7
+        draft["config"]["mode"] == "pipeline" and draft["config"]["pipeline"]["temperature"] == 0.7
     )
 
     saved = (
@@ -320,13 +319,13 @@ async def test_editor_saves_drafts_without_creating_versions(
     # Restore v1 into the editor, then publish straight from the draft.
     v1 = next(v for v in saved["versions"] if v["version"] == 1)
     restored = (await admin_client.post(f"/api/agents/{aid}/versions/{v1['id']}/restore")).json()
-    assert restored["config"]["mode"] == "pipeline" and restored["has_draft_changes"]
+    assert restored["config"]["mode"] == "gemini_live" and restored["has_draft_changes"]
     published = (await admin_client.post(f"/api/agents/{aid}/publish", json={})).json()
     assert published["latest_version"] == 3 and published["published_version"] == 3
     assert not published["has_unpublished_changes"]
 
     discarded = (await admin_client.delete(f"/api/agents/{aid}/draft")).json()
-    assert discarded["config"]["mode"] == "pipeline"
+    assert discarded["config"]["mode"] == "gemini_live"
 
 
 async def test_retired_models_are_upgraded(admin_client: httpx.AsyncClient) -> None:

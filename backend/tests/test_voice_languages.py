@@ -311,3 +311,28 @@ async def test_slow_gemini_connect_is_retried(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(gemini_live, "CONNECT_TIMEOUT_SECS", 0.05)
     await asyncio.wait_for(llm._connect_in_time(None), timeout=2)
     assert len(attempts) == 2 and llm._ready.is_set()
+
+
+async def test_silent_opening_is_asked_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gemini sometimes connects but never greets; the caller must not wait in silence."""
+    from ymva.voice import session as session_module
+
+    monkeypatch.setattr(session_module, "OPENING_REPLY_SECS", 0.05)
+    config = interest_reminder().model_copy(update={"mode": "gemini_live"})
+    call = _session(config)
+    call._build()  # type: ignore[attr-defined]
+    llm = call._live_llm  # type: ignore[attr-defined]
+    asked: list[int] = []
+
+    async def recover_opening() -> None:
+        asked.append(1)
+        call.conversation.agent_replied = True  # greets this time
+
+    monkeypatch.setattr(llm, "recover_opening", recover_opening)
+    llm._ready.set()
+    await asyncio.wait_for(call._ensure_opening(), timeout=2)  # type: ignore[attr-defined]
+    assert asked == [1]
+
+    asked.clear()
+    await asyncio.wait_for(call._ensure_opening(), timeout=2)  # type: ignore[attr-defined]
+    assert asked == []  # it greeted: nothing to do

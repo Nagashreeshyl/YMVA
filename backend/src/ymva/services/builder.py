@@ -115,9 +115,9 @@ Platform facts:
   The agent replies in whatever language the caller speaks, from its list of languages, and
   switches mid-call. The greeting language comes from the customer's preferred language, else
   their state, else the default language.
-- Modes: "pipeline" (Standard: Sarvam hears and speaks, Gemini thinks; best Indian-language
-  accuracy; the default) and "gemini_live" (one Gemini model; most natural voice; sometimes
-  mishears Kannada and other Indian languages).
+- Modes: "gemini_live" (the default: Sarvam hears the caller, Gemini Live thinks and speaks;
+  fastest replies and the most natural voice) and "pipeline" (Standard: Sarvam hears and
+  speaks, Gemini thinks; Sarvam's Indian voices, slower replies).
 - Speaking style: "everyday_mix" (natural code-mixed speech such as Kanglish, Tenglish,
   Hinglish; the default, sounds human) or "pure" (formal single language).
 - {_voices()}
@@ -152,7 +152,7 @@ they're speaking to). For "everyday_mix", write them the way people actually tal
 Indian-language words in their own script, everyday English words (loan, interest, payment,
 okay, sir) in English letters.
 
-Defaults unless the admin says otherwise: mode pipeline, everyday_mix, languages en, kn, te, hi,
+Defaults unless the admin says otherwise: mode gemini_live, everyday_mix, languages en, kn, te, hi,
 ta with default en, a female persona named Priya (voice priya / Aoede), announcement off,
 max_duration_seconds 600 (30-3600), silence_timeout_seconds 20 (5-120), office_background
 false, typing_during_tools true, follow_caller_language true.
