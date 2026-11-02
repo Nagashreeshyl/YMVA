@@ -65,6 +65,9 @@ class Transfer(BaseModel):
     """Hand the call to a person when the caller asks for one (phone calls only)."""
 
     enabled: bool = False
+    # "branch_manager": the manager of the customer's branch (the call's "branch" detail,
+    # see Settings > Branches); `phone` is then used for customers whose branch isn't listed.
+    to: Literal["number", "branch_manager"] = "number"
     phone: str = Field(default="", max_length=20)  # E.164, e.g. +918012345678
     when: str = Field(
         default="The caller asks to speak to a person, or needs help you can't give",
@@ -275,6 +278,10 @@ AUTOMATIC_DETAILS = {"call_date", "call_time", "customer_phone", "preferred_lang
 def call_details(config: "AgentConfig") -> list[Variable]:
     """Per-call details an app starting a call must send: used or declared, minus automatic."""
     described = {v.name: v for v in config.variables}
+    if config.transfer.enabled and config.transfer.to == "branch_manager":
+        described.setdefault(
+            "branch", Variable(name="branch", description="Branch where the customer took the loan")
+        )
     return [
         described.get(name, Variable(name=name))
         for name in dict.fromkeys([*detected_variables(config), *described])

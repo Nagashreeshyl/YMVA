@@ -8,17 +8,19 @@ import { useMe } from "@/lib/session";
 import { AccountSettings } from "./account";
 import { ApiKeySettings } from "./api-keys";
 import { AuditLogList } from "./audit-log";
+import { BranchSettings } from "./branches";
 import { DoNotCallSettings } from "./do-not-call";
 import { HealthSettings } from "./health";
 import { TeamSettings } from "./team";
 
-type Tab = "team" | "keys" | "health" | "dnc" | "audit" | "account";
+type Tab = "team" | "keys" | "branches" | "health" | "dnc" | "audit" | "account";
 
 export default function SettingsPage() {
   const { data: me } = useMe();
   const allowed: Record<Tab, boolean> = {
     team: can(me, "users.manage"),
     keys: can(me, "users.manage"),
+    branches: can(me, "settings.manage"),
     health: can(me, "settings.manage"),
     dnc: can(me, "dnc.manage"),
     audit: can(me, "audit.view"),
@@ -28,6 +30,7 @@ export default function SettingsPage() {
     [
       { id: "team", label: "Team" },
       { id: "keys", label: "API keys" },
+      { id: "branches", label: "Branches" },
       { id: "health", label: "Health & alerts" },
       { id: "dnc", label: "Do not call" },
       { id: "audit", label: "Audit log" },
@@ -41,7 +44,7 @@ export default function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        description="People, system health and alerts, numbers never to call, history of changes, and your sign-in."
+        description="People, API keys, branches and their managers, system health and alerts, numbers never to call, history of changes, and your sign-in."
       />
       <div
         role="tablist"
@@ -71,6 +74,7 @@ export default function SettingsPage() {
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
         {tab === "team" && allowed.team && me && <TeamSettings currentUserId={me.id} />}
         {tab === "keys" && allowed.keys && <ApiKeySettings />}
+        {tab === "branches" && allowed.branches && <BranchSettings canEdit />}
         {tab === "health" && allowed.health && <HealthSettings canEdit />}
         {tab === "dnc" && allowed.dnc && <DoNotCallSettings canEdit />}
         {tab === "audit" && allowed.audit && <AuditLogList />}

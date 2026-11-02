@@ -14,6 +14,7 @@ type Updater = (draft: AgentConfig) => void;
 
 const NO_TRANSFER = {
   enabled: false,
+  to: "number" as const,
   phone: "",
   when: "The caller asks to speak to a person, or needs help you can't give",
 };
@@ -430,12 +431,33 @@ export function AgentEditor({
           />
           {transfer.enabled && (
             <>
+              <Segmented
+                label="Transfer to"
+                value={transfer.to ?? "number"}
+                onChange={(to) => update((d) => void (d.transfer = { ...transfer, to }))}
+                options={[
+                  { value: "number", label: "A fixed number" },
+                  { value: "branch_manager", label: "The customer's branch manager" },
+                ]}
+              />
+              {transfer.to === "branch_manager" && (
+                <p className="text-[13px] text-muted">
+                  Each call then needs the customer&apos;s <strong className="text-ink">branch</strong> (where they
+                  took the loan), and the call goes to that branch&apos;s manager from{" "}
+                  <Link href="/settings" className="underline underline-offset-4">
+                    Settings → Branches
+                  </Link>
+                  . Customers whose branch isn&apos;t listed go to the number below.
+                </p>
+              )}
               <Field
-                label="Number to transfer to"
+                label={transfer.to === "branch_manager" ? "Number when the branch isn't listed" : "Number to transfer to"}
                 hint={
                   transfer.phone && !isFullNumber(transfer.phone)
                     ? "Enter the full number; until then the agent can't transfer."
-                    : "With country code, e.g. +91 80 1234 5678."
+                    : transfer.to === "branch_manager"
+                      ? "Optional, e.g. the head office. Leave empty and those calls aren't transferred."
+                      : "With country code, e.g. +91 80 1234 5678."
                 }
               >
                 {(p) => (

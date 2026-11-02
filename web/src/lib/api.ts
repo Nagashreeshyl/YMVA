@@ -174,8 +174,9 @@ export interface AgentConfig {
   follow_caller_language?: boolean;
   state_languages: Record<string, string>;
   announcement: { enabled: boolean; text: string; translations: Record<string, string> };
-  /** Hand the call to a person on this number when the caller asks (phone calls only). */
-  transfer?: { enabled: boolean; phone: string; when: string };
+  /** Hand the call to a person when the caller asks (phone calls only): this number, or the
+   * manager of the customer's branch (their "branch" detail; `phone` then covers unlisted ones). */
+  transfer?: { enabled: boolean; to?: "number" | "branch_manager"; phone: string; when: string };
   /** Optional notes for {{names}} used in the text; values are given when calling. */
   variables: AgentVariable[];
   pipeline: {
@@ -416,4 +417,14 @@ export interface ContactImportResult {
   invalid: { row: number; value: string; reason: string }[];
   invalid_count: number;
   columns: string[];
+}
+
+/** A branch and its manager (Settings > Branches); transfers go to the customer's branch. */
+export interface Branch {
+  id: string;
+  name: string;
+  other_names: string[];
+  manager_name: string;
+  manager_phone: string;
+  updated_at: string;
 }

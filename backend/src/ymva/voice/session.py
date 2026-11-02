@@ -129,8 +129,10 @@ class CallSetup:
     provider_call_id: str | None = None
     tools: list[LoadedTool] = field(default_factory=list)
     customer_phone: str | None = None
-    # Phone calls: moves the call to the agent's transfer number (raises TelephonyError).
+    # Phone calls: moves the call to `transfer_to` (raises TelephonyError).
     transfer: Callable[[], Awaitable[None]] | None = None
+    # The agent's fixed transfer number, or the customer's branch manager (services.branches).
+    transfer_to: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -273,8 +275,7 @@ class CallSession:
 
     @property
     def _can_transfer(self) -> bool:
-        t = self.setup.config.transfer
-        return t.enabled and t.number is not None and self.setup.transfer is not None
+        return self.setup.transfer_to is not None and self.setup.transfer is not None
 
     async def _transfer_call(self, params: FunctionCallParams) -> None:
         assert self.task is not None and self.setup.transfer is not None
@@ -284,7 +285,7 @@ class CallSession:
             )
             return
         self._transferring = True
-        phone = self.setup.config.transfer.number
+        phone = self.setup.transfer_to
         await self.recorder.event(
             CallEventType.TOOL_CALL,
             "transfer_call",

@@ -132,6 +132,15 @@ The call opens in the customer's language when you send their state:
   the call opens in the agent's default language. If the customer answers in another
   language, the agent follows them.
 
+### Transfers to the customer's branch manager
+
+If the agent is set to transfer calls to **the customer's branch manager**, its `details`
+include `branch`: send the branch where the customer took the loan, e.g.
+`"branch": "Chintamani"`. When the customer asks for a person, the call goes to that branch's
+manager as set in YMVA (**Settings → Branches**, also `GET /api/branches`). Other spellings
+set up there work too (e.g. `Bengaluru` for Bangalore). A branch YMVA doesn't know goes to the
+agent's fixed transfer number.
+
 ## 5. Get the result
 
 **Callback (recommended).** When the call ends, YMVA POSTs to your `callback_url`:
@@ -184,6 +193,7 @@ Every error is `{"detail": "a plain explanation"}`. Show or log it as is.
 | Check the key | `GET /api/auth/me` |
 | List agents (with their required details) | `GET /api/agents` |
 | List YMVA's phone numbers | `GET /api/numbers` |
+| List branches and their managers | `GET /api/branches` |
 | Start a call | `POST /api/calls/outbound` |
 | A call's status and result | `GET /api/calls/{call_id}` |
 | Calls this key started | `GET /api/calls?limit=50&offset=0` |

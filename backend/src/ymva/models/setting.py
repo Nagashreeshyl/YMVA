@@ -5,7 +5,7 @@ from sqlalchemy import ForeignKey, String, false
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from ymva.models.base import Base, Timestamps
+from ymva.models.base import Base, Timestamps, UUIDPk
 
 
 class AppSetting(Timestamps, Base):
@@ -27,3 +27,16 @@ class DoNotCall(Timestamps, Base):
     # Asked for on a call and waiting for an admin to approve; not blocked until approved.
     pending: Mapped[bool] = mapped_column(default=False, server_default=false())
     call_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("calls.id", ondelete="SET NULL"))
+
+
+class Branch(UUIDPk, Timestamps, Base):
+    """A Yellow Metal branch and its manager: calls are transferred to the manager of the
+    branch where the customer took their loan (the call's "branch" detail)."""
+
+    __tablename__ = "branches"
+
+    name: Mapped[str] = mapped_column(String(80), unique=True)
+    # Other ways apps may write it, e.g. "Bengaluru" for Bangalore.
+    other_names: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    manager_name: Mapped[str] = mapped_column(String(120), default="")
+    manager_phone: Mapped[str] = mapped_column(String(20))  # E.164

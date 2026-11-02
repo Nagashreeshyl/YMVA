@@ -61,6 +61,13 @@ value or drag one in from an earlier node (e.g. `{{ $json.name }}`). If you chan
 agent's variables in YMVA, reopen the node to see the new list. Date, time, the
 customer's phone, State and Language are filled in by YMVA and aren't listed.
 
+### Branch (transfers to the branch manager)
+
+If the agent transfers calls to the customer's branch manager, **Customer Details** also has
+**Branch**: a dropdown of the branches in YMVA (Settings → Branches). Pick one, or click
+**Expression** and drag in the branch column from your sheet. When the customer asks for a
+person, the call goes to that branch's manager.
+
 ### Getting the result back
 
 ### Language: State or Language

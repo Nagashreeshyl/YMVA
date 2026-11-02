@@ -9,11 +9,18 @@ from ymva.telephony.twilio_family import TwilioClient
 from ymva.voice.config import Transfer
 
 
-async def _agent_with_transfer(client: httpx.AsyncClient, phone: str) -> dict[str, Any]:
+async def _agent_with_transfer(
+    client: httpx.AsyncClient, phone: str, to: str = "number"
+) -> dict[str, Any]:
     setup = await _setup(client)
     aid = setup["agent"]["id"]
     config = setup["agent"]["config"]
-    config["transfer"] = {"enabled": True, "phone": phone, "when": "they ask for a person"}
+    config["transfer"] = {
+        "enabled": True,
+        "to": to,
+        "phone": phone,
+        "when": "they ask for a person",
+    }
     await client.put(f"/api/agents/{aid}/draft", json={"config": config})
     published = (await client.post(f"/api/agents/{aid}/publish", json={})).json()
     assert published["config"]["transfer"]["enabled"]
@@ -38,6 +45,29 @@ async def test_transfer_url_dials_the_agents_number(admin_client: httpx.AsyncCli
     assert '<Dial callerId="918012345678"><Number>919845011111</Number></Dial>' in resp.text
     wrong_secret = await admin_client.post(f"/api/{base}x/transfer?call={call['id']}")
     assert wrong_secret.status_code == 404
+
+
+async def test_transfer_dials_the_customers_branch_manager(admin_client: httpx.AsyncClient) -> None:
+    c = admin_client
+    await c.post("/api/branches", json={"name": "Chintamani", "manager_phone": "+919845022222"})
+    setup = await _agent_with_transfer(c, "98450 11111", to="branch_manager")
+    base = setup["account"]["answer_url"].split("/api/", 1)[1].removesuffix("/answer")
+    dialled = {}
+    for branch in ("Chintamani", "Kolar"):  # Kolar isn't listed: the agent's fixed number
+        call = (
+            await c.post(
+                "/api/calls/outbound",
+                json={
+                    "agent_id": setup["agent"]["id"],
+                    "from_number_id": setup["number"]["id"],
+                    "to": "+919876543210",
+                    "variables": {"customer_name": "Ravi", "branch": branch},
+                },
+            )
+        ).json()
+        dialled[branch] = (await c.post(f"/api/{base}/transfer?call={call['id']}")).text
+    assert "<Number>919845022222</Number>" in dialled["Chintamani"]
+    assert "<Number>919845011111</Number>" in dialled["Kolar"]
 
 
 def test_transfer_number_needs_to_be_complete() -> None:

@@ -30,12 +30,14 @@ from ymva.models import (
     TelephonyProvider,
 )
 from ymva.services import callback
+from ymva.services.branches import transfer_number
 from ymva.services.calls import (
     CallSetupError,
     check_capacity,
     issue_stream_token,
     redeem_stream_token,
     runnable_version,
+    string_variables,
 )
 from ymva.services.integrations import (
     load_ai_keys,
@@ -233,9 +235,10 @@ async def transfer(
         raise HTTPException(404)
     version = await db.get(AgentVersion, call.agent_version_id)
     config = AgentConfig.model_validate(call.agent_config or (version.config if version else {}))
-    if not (config.transfer.enabled and config.transfer.number):
+    to = await transfer_number(db, config, string_variables(call.variables))
+    if not to:
         return _reply(client.reject_response("Sorry, no one is available right now. Goodbye."))
-    return _reply(client.transfer_response(config.transfer.number, _our_number(call)))
+    return _reply(client.transfer_response(to, _our_number(call)))
 
 
 @router.websocket("/{provider}/ws/{token}")
@@ -287,7 +290,7 @@ async def media_stream(websocket: WebSocket, provider: TelephonyProvider, token:
             setup.provider_call_id,
             url=f"{webhook_urls(account)['answer_url'].removesuffix('/answer')}/transfer"
             f"?call={call_id}",
-            to_number=setup.config.transfer.number or "",
+            to_number=setup.transfer_to or "",
             caller_id=_our_number(call),
         )
 

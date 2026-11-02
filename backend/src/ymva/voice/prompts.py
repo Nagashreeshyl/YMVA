@@ -42,7 +42,8 @@ How to speak on a phone call:
   short first sentence so you can be heard quickly. Ask one question at a time.
 - Never use lists, markdown, emojis, or symbols. Say amounts and dates the way a person says
   them in the current language (for example "five thousand two hundred rupees", "the 26th of
-  October at 3 PM").
+  October at 3 PM"). Large numbers in the caller's details come with their words in brackets,
+  e.g. "90000 (ninety thousand)": say exactly that amount; never drop or add a zero.
 - If you didn't understand, politely ask the caller to repeat.
 - Before asking for any personal detail, make sure the caller knows who you are, where you
   are calling from and why. If your greeting was cut off, say that again briefly first. As
@@ -83,6 +84,48 @@ Your accent:
   Indian English accent and intonation, like a friendly customer care executive from Bengaluru.
   This starts with your very first word: the greeting too. Never sound American or British.
   Never mention your accent."""
+
+
+_ONES = [
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
+    "nineteen",
+]  # fmt: skip
+_TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
+
+def _below_thousand(n: int) -> str:
+    words = []
+    if n >= 100:
+        words += [_ONES[n // 100], "hundred"]
+        n %= 100
+    if n >= 20:
+        words.append(_TENS[n // 10] + (f"-{_ONES[n % 10]}" if n % 10 else ""))
+    elif n or not words:
+        words.append(_ONES[n])
+    return " ".join(words)
+
+
+def indian_number_words(n: int) -> str:
+    """90000 -> "ninety thousand", 250000 -> "two lakh fifty thousand" (Indian grouping)."""
+    parts = []
+    for size, name in ((10_000_000, "crore"), (100_000, "lakh"), (1_000, "thousand")):
+        if n >= size:
+            parts.append(f"{indian_number_words(n // size)} {name}")
+            n %= size
+    if n or not parts:
+        parts.append(_below_thousand(n))
+    return " ".join(parts)
+
+
+def _with_words(value: object) -> str:
+    """Amounts like "90000" or "1,00,000" get their words alongside: Gemini Live misread 90000
+    as "nine thousand" on a real call."""
+    text = str(value).strip()
+    digits = text.replace(",", "")
+    if digits.isdigit() and 1000 <= int(digits) < 10**12 and not digits.startswith("0"):
+        return f"{text} ({indian_number_words(int(digits))})"
+    return text
 
 
 def preferred_language(config: AgentConfig, variables: dict[str, str]) -> str | None:
@@ -136,7 +179,7 @@ def system_instruction(
     config: AgentConfig, variables: dict[str, str], opening: str, timezone: str
 ) -> str:
     now = datetime.now(ZoneInfo(timezone))
-    known = "\n".join(f"- {k}: {v}" for k, v in variables.items() if v) or "- (none)"
+    known = "\n".join(f"- {k}: {_with_words(v)}" for k, v in variables.items() if v) or "- (none)"
     # Accent and language rules first: placed after a long prompt, Gemini Live ignored them
     # (answered Telugu in English; greeted in an American accent).
     accent = INDIAN_ACCENT + "\n\n" if config.mode == "gemini_live" else ""

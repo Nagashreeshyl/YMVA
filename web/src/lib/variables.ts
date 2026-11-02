@@ -40,7 +40,9 @@ export function rememberValues(agentId: string, values: Record<string, string>):
 /** Built-in per-call details: they pick the greeting language and needn't appear in the text. */
 export const ROUTING_DETAILS = ["preferred_language", "state"] as const;
 
-/** Detected details plus the built-in ones, without duplicates. */
+/** Detected details plus the built-in ones, without duplicates. An agent that transfers to the
+ * customer's branch manager also needs their branch. */
 export function callDetails(config: AgentConfig): string[] {
-  return [...new Set([...detectVariables(config), ...ROUTING_DETAILS])];
+  const branch = config.transfer?.enabled && config.transfer.to === "branch_manager" ? ["branch"] : [];
+  return [...new Set([...detectVariables(config), ...branch, ...ROUTING_DETAILS])];
 }

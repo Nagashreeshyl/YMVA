@@ -9,6 +9,7 @@ from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPI
 from ymva.db import get_sessionmaker
 from ymva.logging import get_logger
 from ymva.models import Agent, AgentVersion, Call, CallDirection, CallStatus
+from ymva.services.branches import transfer_number
 from ymva.services.calls import ACTIVE_SESSIONS, CallSetupError, string_variables
 from ymva.services.integrations import load_ai_keys
 from ymva.services.tools import load_tools
@@ -43,7 +44,8 @@ async def load_setup(
             config = AgentConfig.model_validate(call.agent_config)
         keys = await load_ai_keys(db)
         tools = await load_tools(db, config.tools, config.analysis.details)
-    variables = string_variables(call.variables)
+        variables = string_variables(call.variables)
+        transfer_to = await transfer_number(db, config, variables)
     if not greeting.has(call_id):
         greeting.prefetch(call_id, config, variables, keys, output_sample_rate)
     missing = sorted(required_providers(config) - keys.keys())
@@ -60,6 +62,7 @@ async def load_setup(
         provider_call_id=call.provider_call_id,
         output_sample_rate=output_sample_rate,
         tools=tools,
+        transfer_to=transfer_to,
         customer_phone=call.to_number
         if call.direction == CallDirection.OUTBOUND
         else call.from_number,

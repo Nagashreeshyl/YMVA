@@ -271,6 +271,17 @@ export class Ymva implements INodeType {
         const agents = (await ymva(this, 'GET', '/agents')) as IDataObject[];
         const agent = agents.find((a) => a.id === agentId);
         const details = (agent?.details ?? []) as IDataObject[];
+        // Agents that transfer to the customer's branch manager need the branch: offer the
+        // branches set up in YMVA (Settings > Branches), with their other spellings.
+        const branches = details.some((d) => d.name === 'branch')
+          ? ((await ymva(this, 'GET', '/branches')) as IDataObject[])
+          : [];
+        const branchOptions = branches.flatMap((b) =>
+          [b.name as string, ...((b.other_names as string[]) ?? [])].map((name) => ({
+            name: name === b.name ? name : `${name} (${b.name})`,
+            value: name,
+          })),
+        );
         return {
           fields: details.map((d) => ({
             id: d.name as string,
@@ -279,7 +290,9 @@ export class Ymva implements INodeType {
             defaultMatch: false,
             canBeUsedToMatch: false,
             display: true,
-            type: 'string',
+            ...(d.name === 'branch' && branchOptions.length
+              ? { type: 'options' as const, options: branchOptions }
+              : { type: 'string' as const }),
           })),
           emptyFieldsNotice: agent
             ? 'This agent needs no customer details'

@@ -1,7 +1,8 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { Field, Input, Select } from "./ui";
-import type { AgentConfig } from "@/lib/api";
+import { api, type AgentConfig, type Branch } from "@/lib/api";
 import { LANGUAGE_NAMES } from "@/lib/format";
 import { callDetails, variableLabel } from "@/lib/variables";
 
@@ -19,10 +20,34 @@ export function CallDetailsFields({
 }) {
   const notes = Object.fromEntries(config.variables.map((v) => [v.name, v.description || undefined]));
   const set = (name: string, value: string) => onChange({ ...values, [name]: value });
+  const details = callDetails(config);
+  const branches = useQuery({
+    queryKey: ["branches"],
+    queryFn: () => api<Branch[]>("/branches"),
+    enabled: details.includes("branch"),
+  });
   return (
     <>
-      {callDetails(config).map((name) =>
-        name === "preferred_language" ? (
+      {details.map((name) =>
+        name === "branch" && branches.data?.length ? (
+          <Field key={name} label="Branch" hint="Where the customer took the loan. Transfers go to its manager.">
+            {(p) => (
+              <Select
+                {...p}
+                value={values[name] ?? ""}
+                disabled={disabled}
+                onChange={(e) => set(name, e.target.value)}
+              >
+                <option value="">Choose the branch</option>
+                {branches.data.map((b) => (
+                  <option key={b.id} value={b.name}>
+                    {b.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        ) : name === "preferred_language" ? (
           <Field key={name} label="Preferred language" hint="Optional. Picks the greeting language.">
             {(p) => (
               <Select

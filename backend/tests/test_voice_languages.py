@@ -340,3 +340,29 @@ async def test_silent_opening_is_asked_again(monkeypatch: pytest.MonkeyPatch) ->
     asked.clear()
     await asyncio.wait_for(call._ensure_opening(), timeout=2)  # type: ignore[attr-defined]
     assert asked == []  # it greeted: nothing to do
+
+
+def test_amounts_come_with_their_words() -> None:
+    from ymva.voice.prompts import indian_number_words
+
+    assert indian_number_words(90000) == "ninety thousand"
+    assert indian_number_words(100000) == "one lakh"
+    assert indian_number_words(250450) == "two lakh fifty thousand four hundred fifty"
+    assert (
+        indian_number_words(12345678)
+        == "one crore twenty-three lakh forty-five thousand six hundred seventy-eight"
+    )
+    text = system_instruction(
+        interest_reminder(),
+        {
+            "customer_name": "Ramesh",
+            "due_amount": "90000",
+            "loan_amount": "1,00,000",
+            "loan_id": "0042",
+        },
+        "en",
+        "Asia/Kolkata",
+    )
+    assert "- due_amount: 90000 (ninety thousand)" in text
+    assert "- loan_amount: 1,00,000 (one lakh)" in text
+    assert "- loan_id: 0042\n" in text  # ids with leading zeros aren't amounts
