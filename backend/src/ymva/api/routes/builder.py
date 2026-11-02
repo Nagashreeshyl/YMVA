@@ -10,10 +10,23 @@ from sqlalchemy import select
 
 from ymva.api.deps import AgentEditor, AgentViewer, DbSession, client_ip
 from ymva.api.routes.agents import AgentDetail, _detail, _get_agent, _latest
-from ymva.models import Agent, AgentAssistantMessage, AgentVersion
+from ymva.models import (
+    Agent,
+    AgentAssistantMessage,
+    AgentVersion,
+    Call,
+    CallEvent,
+    CallEventType,
+)
 from ymva.redis import get_redis
 from ymva.services import audit, ratelimit
-from ymva.services.builder import BuilderError, edit_agent, generate_agent
+from ymva.services.builder import (
+    INTERVIEWER_NAME,
+    BuilderError,
+    brief_from_interview,
+    edit_agent,
+    generate_agent,
+)
 from ymva.services.integrations import load_ai_keys
 from ymva.voice.config import AgentConfig
 from ymva.voice.templates import blank
@@ -27,8 +40,32 @@ HISTORY_MESSAGES = 16
 
 
 class GenerateIn(BaseModel):
-    description: str = Field(min_length=10, max_length=6000)
+    # Either a written description, or the builder interview call it was talked through in.
+    description: str | None = Field(default=None, min_length=10, max_length=6000)
+    call_id: uuid.UUID | None = None
     name: str | None = Field(default=None, max_length=120)
+
+
+async def _interview_brief(db: DbSession, call_id: uuid.UUID, admin: AgentEditor) -> str:
+    call = await db.get(Call, call_id)
+    if call is None or call.agent_name != INTERVIEWER_NAME or call.placed_by_id != admin.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
+    events = await db.scalars(
+        select(CallEvent)
+        .where(
+            CallEvent.call_id == call_id,
+            CallEvent.type.in_([CallEventType.USER_TURN, CallEventType.AGENT_TURN]),
+        )
+        .order_by(CallEvent.seq)
+    )
+    lines = [
+        ("Admin" if e.type == CallEventType.USER_TURN else "Interviewer", e.content) for e in events
+    ]
+    if not any(who == "Admin" for who, _ in lines):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Nothing was said about the agent. Talk it through first."
+        )
+    return brief_from_interview(lines)
 
 
 class AssistantIn(BaseModel):
@@ -100,9 +137,15 @@ async def generate(
     body: GenerateIn, request: Request, admin: AgentEditor, db: DbSession
 ) -> AgentDetail:
     """Write a new agent from a plain-English description."""
+    if body.call_id is not None:
+        brief = await _interview_brief(db, body.call_id, admin)
+    elif body.description:
+        brief = body.description
+    else:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Describe the agent first")
     key = await _google_key(db, admin)
     try:
-        spec, config = await generate_agent(body.description, key, blank())
+        spec, config = await generate_agent(brief, key, blank())
     except BuilderError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     name = (body.name or "").strip() or spec.name.strip()[:120] or "New agent"
@@ -121,9 +164,7 @@ async def generate(
     )
     # The brief starts the assistant chat, so later edits can refer back to it.
     db.add(
-        AgentAssistantMessage(
-            agent_id=agent.id, role="user", content=body.description, created_by_id=admin.id
-        )
+        AgentAssistantMessage(agent_id=agent.id, role="user", content=brief, created_by_id=admin.id)
     )
     await db.flush()
     db.add(

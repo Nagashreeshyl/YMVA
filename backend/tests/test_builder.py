@@ -158,3 +158,41 @@ def test_assistant_can_change_after_call_outcomes_and_details() -> None:
     config = from_spec(spec, interest_reminder())
     assert [o.name for o in config.analysis.outcomes] == ["Appointment booked"]
     assert [d.name for d in config.analysis.details] == ["Appointment date"]
+
+
+async def test_agent_is_built_from_a_talked_through_conversation(
+    admin_client: httpx.AsyncClient, _fake_gemini: list[Any]
+) -> None:
+    from ymva.db import get_sessionmaker
+    from ymva.models import Call, CallDirection, CallEvent, CallEventType, CallStatus
+
+    await _with_key(admin_client)
+    me = (await admin_client.get("/api/auth/me")).json()
+    async with get_sessionmaker()() as db:
+        call = Call(
+            agent_name=builder.INTERVIEWER_NAME,
+            direction=CallDirection.WEB,
+            status=CallStatus.COMPLETED,
+            placed_by_id=me["id"],
+            agent_config=builder.interviewer().model_dump(mode="json"),
+        )
+        db.add(call)
+        await db.flush()
+        turns = [
+            (CallEventType.AGENT_TURN, "Tell me about the agent you want to create."),
+            (CallEventType.USER_TURN, "It reminds customers about EMIs. Never be rude."),
+        ]
+        for seq, (kind, text) in enumerate(turns):
+            db.add(CallEvent(call_id=call.id, seq=seq, type=kind, content=text))
+        await db.commit()
+        call_id = str(call.id)
+
+    _fake_gemini.append(_spec(name="EMI reminder"))
+    resp = await admin_client.post("/api/agents/generate", json={"call_id": call_id})
+    assert resp.status_code == 201, resp.text
+    history = (await admin_client.get(f"/api/agents/{resp.json()['id']}/assistant")).json()
+    assert "Admin: It reminds customers about EMIs. Never be rude." in history[0]["content"]
+    assert "Interviewer: Tell me about" in history[0]["content"]
+
+    # Nothing to build from: neither a description nor a conversation.
+    assert (await admin_client.post("/api/agents/generate", json={})).status_code == 400

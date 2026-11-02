@@ -437,8 +437,9 @@ class CallSession:
                 data={"from": previous, "to": current},
             )
 
-        vad = SileroVADAnalyzer(params=VADParams(stop_secs=0.2))
-        turn_end = turn_stop_strategy()
+        pause = config.limits.reply_after_pause_seconds
+        vad = SileroVADAnalyzer(params=VADParams(stop_secs=pause))
+        turn_end = turn_stop_strategy(pause)
         user_params = LLMUserAggregatorParams(
             vad_analyzer=vad,
             user_idle_timeout=config.limits.silence_timeout_seconds,

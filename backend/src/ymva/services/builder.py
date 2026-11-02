@@ -21,6 +21,7 @@ from ymva.voice.config import (
     SARVAM_VOICES,
     AgentConfig,
     Announcement,
+    CallLimits,
     TrackedItem,
     Variable,
 )
@@ -183,8 +184,8 @@ Rules:
 ---"""
 
 ASSISTANT_RULES = """\
-You are now the admin's assistant inside the agent editor. The admin asks you to change the
-agent or asks questions about it.
+You are now YMA, the Yellow Metal Assistant: the admin's assistant inside the agent editor.
+The admin asks you to change the agent or asks questions about it.
 - When they ask for a change, return the full updated agent in "agent" (every field, with only
   the requested changes made, everything else exactly as it was) and list each change in
   "changes" in plain words, the way the editor names things ("Greeting language: Telugu",
@@ -356,3 +357,66 @@ async def edit_agent(
                 _text("user", f"That agent isn't valid: {_problems(error)}. Fix it."),
             ]
     raise BuilderError("I couldn't make that change in a way that works. Try rewording it.")
+
+
+# ---- Talk it through: build an agent from a spoken conversation -----------------------
+
+INTERVIEWER_NAME = "YMA agent builder"
+
+INTERVIEWER_PROMPT = """\
+You are YMA, the Yellow Metal Assistant: YMVA's agent designer. The person on the line is an
+admin at Yellow Metal who wants
+to create a new AI phone agent. Your job is to understand exactly how they want that agent
+to behave, by talking it through with them, so it can be built afterwards from this
+conversation. You don't build anything yourself and you are not the new agent.
+
+Find out, one short question at a time, in a natural order:
+- What the agent is for: who it calls (or who calls it), why, and what a successful call
+  achieves.
+- Who the agent is: its name, female or male voice, and how it should speak (tone, how
+  formal, which languages, everyday mixed language or pure).
+- How the call should go, step by step: how it opens, what it says or asks next, and how it
+  ends.
+- What it already knows about each customer before the call (for example their name, loan
+  number, amount due, due date) and what it must find out from them.
+- The dos and don'ts, and what to do when things don't go to plan: wrong person, customer
+  busy, refuses, angry, asks something it can't answer, wants a callback or a human.
+- What results to note after each call (for example "promised to pay" with the date).
+
+How to talk with them:
+- Let them explain in their own words; don't read out this list. People pause while they
+  think: if what they said sounds unfinished, just say "mm-hm" or "go on" and let them
+  continue. After each answer, confirm
+  in one sentence what you understood, then ask about the next thing.
+- Notice what they haven't covered and ask about it. When they aren't sure, suggest a
+  sensible choice and ask if that's fine.
+- Never ask about technical settings (models, API keys, numbers).
+- When you have the whole picture, summarise the agent in a few sentences and ask if
+  anything should change. When they're happy, tell them to end the call: the agent will be
+  built from this conversation, and they can still edit everything afterwards."""
+
+
+def interviewer() -> AgentConfig:
+    """The built-in agent that interviews an admin about the agent they want."""
+    return AgentConfig(
+        system_prompt=INTERVIEWER_PROMPT,
+        greetings={
+            "en": "Hi! I'm YMA, the Yellow Metal Assistant. Tell me about the agent you want "
+            "to create: what should it do, and who will it talk to?"
+        },
+        limits=CallLimits(
+            max_duration_seconds=1800, silence_timeout_seconds=90, reply_after_pause_seconds=1.5
+        ),
+    )
+
+
+def brief_from_interview(lines: list[tuple[str, str]]) -> str:
+    """The interview as a brief for generate_agent. `lines` are (speaker, text)."""
+    transcript = "\n".join(f"{who}: {text}" for who, text in lines)
+    return (
+        "The admin described the agent they want by talking it through with an interviewer. "
+        "Build the agent from everything the admin said: their words decide, the "
+        "interviewer's lines are only context (use a suggestion the admin agreed to). Keep "
+        "every step, rule and detail they mentioned, and where they left something out, "
+        "choose sensible defaults.\n\n" + transcript
+    )

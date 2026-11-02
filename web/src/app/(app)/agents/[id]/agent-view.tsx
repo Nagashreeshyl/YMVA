@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowLeft, Check, Loader2 } from "lucide-react";
+import { Buddy } from "@/components/buddy";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
@@ -128,6 +129,7 @@ export function AgentView() {
       <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-3">
+            <Buddy seed={a.id} size={44} />
             <h1 className="font-display text-[28px] leading-9 font-extrabold tracking-[-0.02em]">{a.name}</h1>
             <AgentStatusBadge agent={a} />
           </div>

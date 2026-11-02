@@ -42,6 +42,7 @@ from ymva.models import (
 )
 from ymva.permissions import Perm, can
 from ymva.services import analysis, audit
+from ymva.services.builder import INTERVIEWER_NAME, interviewer
 from ymva.services.calls import (
     ACTIVE_SESSIONS,
     CallSetupError,
@@ -430,13 +431,15 @@ async def browser_call(
         await db.commit()
         call_id = call.id
 
-    await websocket.send_json(
-        {
-            "type": "call",
-            "call_id": str(call_id),
-            "version": None if version_id is None and agent.draft_config else version.version,
-        }
+    await _talk(
+        websocket,
+        call_id,
+        None if version_id is None and agent.draft_config else version.version,
     )
+
+
+async def _talk(websocket: WebSocket, call_id: uuid.UUID, version: int | None) -> None:
+    await websocket.send_json({"type": "call", "call_id": str(call_id), "version": version})
     try:
         setup = await load_setup(
             call_id, live_events=True, output_sample_rate=BROWSER_OUTPUT_SAMPLE_RATE
@@ -448,3 +451,47 @@ async def browser_call(
         return
     with contextlib.suppress(WebSocketDisconnect):
         await run_on_websocket(websocket, setup, BrowserAudioSerializer())
+
+
+@router.websocket("/web/builder")
+async def builder_interview(websocket: WebSocket) -> None:
+    """Describe a new agent by talking it through; POST /agents/generate builds it from the
+    call."""
+    if not _origin_ok(websocket):
+        await websocket.close(code=1008)
+        return
+    async with get_sessionmaker()() as db:
+        token = websocket.cookies.get(SESSION_COOKIE)
+        user = await _user_from_session(db, token) if token else None
+        if user is None or not can(user.role, Perm.AGENTS_EDIT):
+            await websocket.close(code=1008)
+            return
+        await websocket.accept()
+        try:
+            await check_capacity(db)
+        except CallSetupError as exc:
+            await websocket.send_json({"type": "error", "content": str(exc)})
+            await websocket.close()
+            return
+        call = Call(
+            agent_name=INTERVIEWER_NAME,
+            direction=CallDirection.WEB,
+            status=CallStatus.IN_PROGRESS,
+            from_number=f"browser:{user.email}",
+            placed_by_id=user.id,
+            agent_config=interviewer().model_dump(mode="json"),
+            variables={},
+        )
+        db.add(call)
+        await db.flush()
+        await audit.record(
+            db,
+            actor=user,
+            action="call.builder_interview",
+            entity_type="call",
+            entity_id=call.id,
+            summary="Started describing a new agent by voice",
+        )
+        await db.commit()
+        call_id = call.id
+    await _talk(websocket, call_id, None)

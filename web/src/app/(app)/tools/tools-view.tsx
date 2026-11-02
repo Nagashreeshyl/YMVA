@@ -6,10 +6,10 @@ import {
   FileSpreadsheet,
   Globe,
   Plus,
-  Sparkles,
   Wrench,
   X,
 } from "lucide-react";
+import { Buddy } from "@/components/buddy";
 import { useState } from "react";
 import { CopyButton } from "@/components/copy";
 import { useConfirm } from "@/components/dialog";
@@ -409,10 +409,7 @@ function ToolForm({
               loading={generate.isPending}
               onClick={() => generate.mutate()}
             >
-              {!generate.isPending && (
-                <Sparkles className="size-4" aria-hidden />
-              )}{" "}
-              Fill in with AI
+              {!generate.isPending && <Buddy yma size={20} />} Fill in with YMA
             </Button>
             {generate.isError && <ErrorNotice error={generate.error} />}
           </div>

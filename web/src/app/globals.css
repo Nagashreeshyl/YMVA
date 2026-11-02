@@ -139,3 +139,52 @@ textarea {
   animation: shimmer 1.4s ease-in-out infinite;
   border-radius: 6px;
 }
+
+/* Buddy: the agents' and YMA's little characters (components/buddy.tsx). */
+.buddy {
+  animation: buddy-float 4s ease-in-out infinite;
+}
+.buddy-active {
+  animation: buddy-bounce 0.6s ease-in-out infinite;
+}
+.buddy-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: buddy-blink 5s infinite;
+}
+@keyframes buddy-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6%);
+  }
+}
+@keyframes buddy-bounce {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-8%) scale(1.04, 0.97);
+  }
+}
+@keyframes buddy-blink {
+  0%,
+  94%,
+  100% {
+    transform: scaleY(1);
+  }
+  97% {
+    transform: scaleY(0.1);
+  }
+}
+.buddy-glow {
+  animation: buddy-glow 2s ease-in-out infinite;
+}
+@keyframes buddy-glow {
+  50% {
+    opacity: 0.55;
+  }
+}

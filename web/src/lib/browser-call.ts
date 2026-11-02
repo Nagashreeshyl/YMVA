@@ -35,6 +35,14 @@ export async function startBrowserCall(
   variables: Record<string, string>,
   handlers: BrowserCallHandlers,
 ): Promise<{ stop: () => void }> {
+  const params = new URLSearchParams({ agent_id: agentId });
+  if (versionId) params.set("version_id", versionId);
+  for (const [k, v] of Object.entries(variables)) if (v) params.set(`var_${k}`, v);
+  return startTalk(`/api/calls/web?${params}`, handlers);
+}
+
+/** The same session at any call WebSocket, e.g. the agent builder's interview. */
+export async function startTalk(path: string, handlers: BrowserCallHandlers): Promise<{ stop: () => void }> {
   // Create and resume the audio context first, while we're still inside the click: browsers
   // keep audio created later (e.g. after the microphone permission prompt) muted.
   const context = new AudioContext({ latencyHint: "interactive" });
@@ -55,10 +63,7 @@ export async function startBrowserCall(
   context.createMediaStreamSource(stream).connect(mic);
   player.connect(context.destination);
 
-  const params = new URLSearchParams({ agent_id: agentId });
-  if (versionId) params.set("version_id", versionId);
-  for (const [k, v] of Object.entries(variables)) if (v) params.set(`var_${k}`, v);
-  const ws = new WebSocket(wsUrl(`/api/calls/web?${params}`));
+  const ws = new WebSocket(wsUrl(path));
   ws.binaryType = "arraybuffer";
   let closed = false;
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, ChevronRight, Plus, Sparkles } from "lucide-react";
+import { Bot, ChevronRight, Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -22,6 +22,8 @@ import { api, type AgentDetail, type AgentOptions, type AgentSummary } from "@/l
 import { LANGUAGE_NAMES, relativeTime } from "@/lib/format";
 import { can } from "@/lib/permissions";
 import { useMe } from "@/lib/session";
+import { Buddy } from "@/components/buddy";
+import { TalkToBuild } from "./talk-to-build";
 
 const EXAMPLE_BRIEFS = [
   "Call customers whose gold loan matures this month. Ask if they want to renew or close it. If renewing, ask them to visit the branch with ID proof; if closing, tell them the amount to pay. Customers are mostly in Telangana.",
@@ -31,7 +33,7 @@ const EXAMPLE_BRIEFS = [
 function NewAgentForm({ onDone }: { onDone: () => void }) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const [how, setHow] = useState<"ai" | "template">("ai");
+  const [how, setHow] = useState<"ai" | "talk" | "template">("ai");
   const [brief, setBrief] = useState("");
   const options = useQuery({
     queryKey: ["agent-options"],
@@ -51,7 +53,7 @@ function NewAgentForm({ onDone }: { onDone: () => void }) {
       api<AgentDetail>("/agents/generate", { method: "POST", json: body }),
     onSuccess: opened,
   });
-  const error = how === "ai" ? generate.error : create.error;
+  const error = how === "ai" ? generate.error : how === "template" ? create.error : null;
 
   return (
     <div className="flex flex-col gap-5 rounded-xl border border-line p-5">
@@ -61,10 +63,13 @@ function NewAgentForm({ onDone }: { onDone: () => void }) {
         onChange={setHow}
         options={[
           { value: "ai", label: "Describe it" },
+          { value: "talk", label: "Talk it through" },
           { value: "template", label: "Start from a template" },
         ]}
       />
-      {how === "ai" ? (
+      {how === "talk" ? (
+        <TalkToBuild onBuilt={opened} onCancel={onDone} />
+      ) : how === "ai" ? (
         <form
           className="flex flex-col gap-4"
           onSubmit={(e) => {
@@ -112,7 +117,7 @@ function NewAgentForm({ onDone }: { onDone: () => void }) {
             </Field>
             <div className="flex gap-2">
               <Button type="submit" loading={generate.isPending} disabled={brief.trim().length < 10}>
-                {!generate.isPending && <Sparkles className="size-4" aria-hidden />}
+                {!generate.isPending && <Bot className="size-4" aria-hidden />}
                 {generate.isPending ? "Writing your agent…" : "Build agent"}
               </Button>
               <Button type="button" variant="ghost" onClick={onDone} disabled={generate.isPending}>
@@ -231,6 +236,7 @@ export default function AgentsPage() {
                   href={`/agents/${a.id}`}
                   className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4 transition-colors hover:bg-rail"
                 >
+                  <Buddy seed={a.id} size={40} />
                   <div className="min-w-0 flex-1">
                     <p className="font-medium">{a.name}</p>
                     <p className="text-[13px] text-muted">

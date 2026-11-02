@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Check, Sparkles, Undo2 } from "lucide-react";
+import { ArrowUp, Check, Undo2 } from "lucide-react";
+import { Buddy } from "@/components/buddy";
 import { useEffect, useRef, useState } from "react";
 import { Button, ErrorNotice, Skeleton } from "@/components/ui";
 import { api, type AgentDetail, type AssistantMessage, type AssistantTurn } from "@/lib/api";
@@ -77,22 +78,26 @@ export function Assistant({
 
   return (
     <section
-      aria-label="AI assistant"
+      aria-label="YMA, the Yellow Metal Assistant"
       className="flex h-[26rem] flex-col rounded-xl border border-line xl:h-auto xl:max-h-[calc(100dvh-7rem)] xl:min-h-[30rem]"
     >
       <header className="flex items-start gap-3 border-b border-line px-5 py-4">
-        <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-gold-soft">
-          <Sparkles className="size-3.5 text-chart-1" aria-hidden />
-        </span>
+        <Buddy yma size={34} active={busy} />
         <div>
-          <h2 className="text-[15px] font-semibold">Assistant</h2>
+          <h2 className="text-[15px] font-semibold">
+            YMA <span className="font-normal text-muted">· Yellow Metal Assistant</span>
+          </h2>
           <p className="text-[13px] text-muted">
             Ask for changes in plain words. They go into your draft; nothing goes live until you publish.
           </p>
         </div>
       </header>
 
-      <ol ref={list} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4" aria-live="polite">
+      <ol
+        ref={list}
+        className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4"
+        aria-live="polite"
+      >
         {history.isPending ? (
           <li>
             <Skeleton className="h-16 rounded-lg" />
@@ -126,38 +131,44 @@ export function Assistant({
                   {m.content}
                 </p>
               ) : (
-                <div className="flex max-w-[92%] flex-col gap-2">
-                  <p className="text-[13px] leading-5 whitespace-pre-wrap">{m.content}</p>
-                  {m.changes.length > 0 && (
-                    <div className="rounded-lg border border-line px-3 py-2.5">
-                      <p className="mb-1.5 text-2xs font-medium text-muted">
-                        {m.undone ? "Undone" : "Changed in your draft"}
-                      </p>
-                      <ul className={cn("flex flex-col gap-1", m.undone && "text-faint line-through")}>
-                        {m.changes.map((c) => (
-                          <li key={c} className="flex gap-1.5 text-[13px]">
-                            <Check
-                              className={cn("mt-0.5 size-3.5 shrink-0", m.undone ? "text-faint" : "text-success")}
-                              aria-hidden
-                            />
-                            <span>{c}</span>
-                          </li>
-                        ))}
-                      </ul>
-                      {m.can_undo && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="-ml-2 mt-1.5"
-                          loading={undo.isPending}
-                          disabled={busy}
-                          onClick={() => undo.mutate(m.id)}
-                        >
-                          <Undo2 className="size-3.5" aria-hidden /> Undo
-                        </Button>
-                      )}
-                    </div>
-                  )}
+                <div className="flex max-w-[92%] gap-2.5">
+                  <Buddy yma size={22} className="mt-0.5" />
+                  <div className="flex min-w-0 flex-col gap-2">
+                    <p className="text-[13px] leading-5 whitespace-pre-wrap">{m.content}</p>
+                    {m.changes.length > 0 && (
+                      <div className="rounded-lg border border-line px-3 py-2.5">
+                        <p className="mb-1.5 text-2xs font-medium text-muted">
+                          {m.undone ? "Undone" : "Changed in your draft"}
+                        </p>
+                        <ul className={cn("flex flex-col gap-1", m.undone && "text-faint line-through")}>
+                          {m.changes.map((c) => (
+                            <li key={c} className="flex gap-1.5 text-[13px]">
+                              <Check
+                                className={cn(
+                                  "mt-0.5 size-3.5 shrink-0",
+                                  m.undone ? "text-faint" : "text-success",
+                                )}
+                                aria-hidden
+                              />
+                              <span>{c}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        {m.can_undo && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="-ml-2 mt-1.5"
+                            loading={undo.isPending}
+                            disabled={busy}
+                            onClick={() => undo.mutate(m.id)}
+                          >
+                            <Undo2 className="size-3.5" aria-hidden /> Undo
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </li>

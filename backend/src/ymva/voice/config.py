@@ -187,6 +187,9 @@ class CallLimits(BaseModel):
     max_duration_seconds: int = Field(default=600, ge=30, le=3600)
     # Agent says goodbye and hangs up after this much silence from the caller.
     silence_timeout_seconds: int = Field(default=20, ge=5, le=120)
+    # How long the caller must pause before the agent replies. Short for snappy phone calls;
+    # the agent builder's interview waits longer so people can think mid-explanation.
+    reply_after_pause_seconds: float = Field(default=0.2, ge=0.2, le=3.0)
 
 
 class AgentConfig(BaseModel):

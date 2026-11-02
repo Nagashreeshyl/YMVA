@@ -30,13 +30,17 @@ async def load_setup(
 ) -> CallSetup:
     async with get_sessionmaker()() as db:
         call = await db.get(Call, call_id)
-        if call is None or call.agent_version_id is None:
+        # The agent builder's interview carries its own instructions and has no saved agent.
+        if call is None or (call.agent_version_id is None and call.agent_config is None):
             raise CallSetupError("Call not found or has no agent")
-        version = await db.get(AgentVersion, call.agent_version_id)
-        agent = await db.get(Agent, call.agent_id) if call.agent_id else None
-        if version is None or agent is None:
-            raise CallSetupError("The agent for this call no longer exists")
-        config = AgentConfig.model_validate(call.agent_config or version.config)
+        if call.agent_version_id is not None:
+            version = await db.get(AgentVersion, call.agent_version_id)
+            agent = await db.get(Agent, call.agent_id) if call.agent_id else None
+            if version is None or agent is None:
+                raise CallSetupError("The agent for this call no longer exists")
+            config = AgentConfig.model_validate(call.agent_config or version.config)
+        else:
+            config = AgentConfig.model_validate(call.agent_config)
         keys = await load_ai_keys(db)
         tools = await load_tools(db, config.tools, config.analysis.details)
     variables = string_variables(call.variables)

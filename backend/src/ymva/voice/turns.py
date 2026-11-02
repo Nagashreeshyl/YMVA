@@ -29,9 +29,9 @@ class SegmentAwareTurnStop(TurnAnalyzerUserTurnStopStrategy):  # type: ignore[no
         await super()._handle_transcription(frame)
 
 
-def turn_stop_strategy() -> SegmentAwareTurnStop:
+def turn_stop_strategy(pause_secs: float = 0.0) -> SegmentAwareTurnStop:
     return SegmentAwareTurnStop(
         turn_analyzer=LocalSmartTurnAnalyzerV3(
-            params=SmartTurnParams(stop_secs=TURN_END_MAX_WAIT_SECS)
+            params=SmartTurnParams(stop_secs=max(TURN_END_MAX_WAIT_SECS, pause_secs))
         )
     )
