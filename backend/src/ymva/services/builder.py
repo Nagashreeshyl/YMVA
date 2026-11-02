@@ -93,10 +93,28 @@ class AgentSpec(BaseModel):
 
 class ToolRequest(BaseModel):
     name: str = Field(description="An existing tool's name to change it, or a new snake_case name")
+    when: Literal["during_call", "after_call"] = Field(
+        default="during_call",
+        description="after_call for sending or saving the call's results (summary, outcome, "
+        "details the customer gave) once it ends; during_call when the agent needs it mid-call",
+    )
     request: str = Field(
         description="What the tool must do, or what to change, in plain words: when the agent "
         "uses it, what it saves or looks up, and any sheet link, columns or API address the "
         "admin gave. Never a key, token or password."
+    )
+
+
+class TestValue(BaseModel):
+    name: str
+    value: str
+
+
+class ToolTest(BaseModel):
+    name: str = Field(description="The tool to run now, as a test")
+    values: list[TestValue] = Field(
+        default_factory=list,
+        description="Sample values for its {{placeholders}}, e.g. customer_name: Test Customer",
     )
 
 
@@ -106,6 +124,12 @@ class AssistantResult(BaseModel):
     agent: AgentSpec | None = Field(description="The full updated agent, or null if unchanged")
     tools: list[ToolRequest] = Field(
         default_factory=list, description="Tools to create or change; empty if none"
+    )
+    remove_tools: list[str] = Field(
+        default_factory=list, description="Names of tools this agent should stop using"
+    )
+    test_tool: ToolTest | None = Field(
+        default=None, description="A tool to run right now because the admin asked to test it"
     )
 
 
@@ -218,6 +242,14 @@ The admin asks you to change the agent or asks questions about it.
   instructions when the agent uses it. The tool is created and switched on for this agent
   for you; don't list it in "changes" yourself. A sheet link, column names or an API address
   the admin types go into the tool's request.
+- Sending or saving a call's results (a summary, the outcome, what the customer said) to a
+  sheet, Telegram, email or CRM is an after_call tool: it runs once the call ends with the
+  full summary and details, so don't add a step for it in the instructions.
+- When the admin no longer wants a tool, put its name in "remove_tools" and take it out of
+  the instructions.
+- When the admin asks to test or try a tool ("send me a test message"), put it in
+  "test_tool" with realistic sample values, set "agent" to null and "changes" to []. The
+  result is added to your reply for you; don't claim it worked.
 - Never ask the admin to type a key, token or password in the chat. When a tool needs one,
   say a secure key field appears below the chat for it.
 - The admin's edits are saved as a draft; they still test and publish themselves."""

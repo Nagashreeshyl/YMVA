@@ -4,6 +4,7 @@ import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -11,6 +12,7 @@ from sqlalchemy import select
 
 from ymva.api.deps import AgentEditor, AgentViewer, DbSession, client_ip
 from ymva.api.routes.agents import AgentDetail, _detail, _get_agent, _latest
+from ymva.config import get_settings
 from ymva.models import (
     Agent,
     AgentAssistantMessage,
@@ -22,17 +24,20 @@ from ymva.models import (
 )
 from ymva.permissions import Perm, can
 from ymva.redis import get_redis
+from ymva.security import decrypt_json
 from ymva.services import audit, ratelimit
 from ymva.services.builder import (
     INTERVIEWER_NAME,
     BuilderError,
     ToolRequest,
+    ToolTest,
     brief_from_interview,
     edit_agent,
     generate_agent,
 )
 from ymva.services.integrations import load_ai_keys
 from ymva.services.tool_builder import apply_draft, draft_tool, missing, tool_by_name
+from ymva.services.tools import call_facts, run_tool
 from ymva.voice.config import AgentConfig, call_details
 from ymva.voice.templates import blank
 
@@ -218,12 +223,19 @@ async def _make_tools(
     if not can(admin.role, Perm.TOOLS_MANAGE):
         return config, [], ["Setting up tools needs an admin; ask one to add it on the Tools page."]
     names, changes, notes = list(config.tools), [], []
+    after = list(config.analysis.send_to)
     known = [d.name for d in call_details(config)]
     for asked in requests[:5]:
         name = re.sub(r"[^a-z0-9_]+", "_", asked.name.strip().lower()).strip("_")[:64]
         tool = await tool_by_name(db, name) if name else None
+        text = asked.request
+        if asked.when == "after_call":
+            text += (
+                "\n\nThis tool runs after the call to record its results: no params; use "
+                "{{summary}}, {{outcome}} and the call's details."
+            )
         try:
-            draft = await draft_tool(key, asked.request, known, tool)
+            draft = await draft_tool(key, text, known, tool)
         except BuilderError:
             notes.append(f"I couldn't set up the {name or 'new'} tool; try describing it again.")
             continue
@@ -253,12 +265,79 @@ async def _make_tools(
             summary=f"YMA set up tool '{tool.name}' for agent use",
             ip_address=client_ip(request),
         )
-        if tool.name not in names:
-            names.append(tool.name)
+        during, other = (names, after) if asked.when == "during_call" else (after, names)
+        if tool.name not in during:
+            during.append(tool.name)
+        if tool.name in other:
+            other.remove(tool.name)
         if needs := missing(tool):
             todo = " and ".join(NEEDS_WORDS[n] for n in needs)
             notes.append(f"To finish {tool.name}, {todo}; it stays off until then.")
-    return config.model_copy(update={"tools": names}), changes, notes
+    analysis = config.analysis.model_copy(update={"send_to": after})
+    return config.model_copy(update={"tools": names, "analysis": analysis}), changes, notes
+
+
+async def _drop_tools(
+    db: DbSession, names: list[str], config: AgentConfig
+) -> tuple[AgentConfig, list[str]]:
+    """Stop this agent using the tools. One that was never finished and no other agent uses
+    is deleted; a working tool stays on the Tools page for later."""
+    kept, after, removed = list(config.tools), list(config.analysis.send_to), []
+    used = await _tools_in_use(db)
+    for name in names:
+        if name not in kept and name not in after:
+            continue
+        for where in (kept, after):
+            if name in where:
+                where.remove(name)
+        removed.append(f"Tool removed: {name}")
+        tool = await tool_by_name(db, name)
+        if tool is not None and missing(tool) and used.get(name, 0) <= 1:
+            await db.delete(tool)
+    analysis = config.analysis.model_copy(update={"send_to": after})
+    return config.model_copy(update={"tools": kept, "analysis": analysis}), removed
+
+
+async def _tools_in_use(db: DbSession) -> dict[str, int]:
+    """Tool name -> how many agents use it (draft or latest version)."""
+    counts: dict[str, int] = {}
+    for agent in await db.scalars(select(Agent)):
+        latest = await _latest(db, agent.id)
+        config = _current_config(agent, latest)
+        for name in set(config.get("tools", [])) | set(
+            config.get("analysis", {}).get("send_to", [])
+        ):
+            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+async def _test_tool(db: DbSession, admin: AgentEditor, request: Request, test: ToolTest) -> str:
+    """Run a tool for real because the admin asked YMA to test it."""
+    tool = await tool_by_name(db, test.name)
+    if tool is None:
+        return f"There's no tool called {test.name} to test."
+    if needs := missing(tool):
+        todo = " and ".join(NEEDS_WORDS[n] for n in needs)
+        return f"I can't test {tool.name} yet: {todo}."
+    if not can(admin.role, Perm.TOOLS_MANAGE):
+        return "Testing tools needs an admin."
+    now = datetime.now(ZoneInfo(get_settings().timezone))
+    values = call_facts(now, None) | {v.name: v.value for v in test.values}
+    secrets = decrypt_json(tool.encrypted_secrets) if tool.encrypted_secrets else None
+    outcome = await run_tool(tool.type.value, tool.config, secrets, values)
+    await audit.record(
+        db,
+        actor=admin,
+        action="tool.test",
+        entity_type="tool",
+        entity_id=tool.id,
+        summary=f"YMA tested tool '{tool.name}'",
+        changes={"ok": outcome.get("ok")},
+        ip_address=client_ip(request),
+    )
+    if outcome.get("ok"):
+        return f"Test: I ran {tool.name} and it worked."
+    return f"Test: {tool.name} didn't work: {outcome.get('error', 'unknown error')}"
 
 
 @router.get("/{agent_id}/assistant", response_model=list[AssistantMessageOut])
@@ -300,6 +379,13 @@ async def assistant_turn(
         updated, tool_changes, tool_notes = await _make_tools(
             db, admin, request, key, result.tools, updated or AgentConfig.model_validate(before)
         )
+    if result.remove_tools:
+        updated, removed = await _drop_tools(
+            db, result.remove_tools, updated or AgentConfig.model_validate(before)
+        )
+        tool_changes += removed
+    if result.test_tool is not None:
+        tool_notes.append(await _test_tool(db, admin, request, result.test_tool))
 
     asked = AgentAssistantMessage(
         agent_id=agent.id, role="user", content=body.message, created_by_id=admin.id

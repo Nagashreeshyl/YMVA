@@ -140,6 +140,18 @@ class SheetsSecrets(BaseModel):
 
 class HttpSecrets(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)  # e.g. Authorization
+    # Filled into {{secret.NAME}} in the URL, headers or body, e.g. a Telegram bot token in
+    # https://api.telegram.org/bot{{secret.bot_token}}/sendMessage.
+    values: dict[str, str] = Field(default_factory=dict)
+
+
+# {{secret.NAME}}: filled from the tool's encrypted secrets, never from the agent or caller.
+SECRET_RE = re.compile(r"\{\{\s*secret\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+
+
+def secret_names(config: dict[str, Any]) -> list[str]:
+    """Every {{secret.NAME}} a tool's settings use, in order."""
+    return list(dict.fromkeys(m.group(1) for m in SECRET_RE.finditer(json.dumps(config))))
 
 
 class DatabaseSecrets(BaseModel):
@@ -166,7 +178,7 @@ def secret_hint(tool_type: str, secrets: dict[str, Any] | None) -> str | None:
     if tool_type == "database":
         url = urlsplit(str(secrets.get("connection", "")))
         return f"{url.hostname}{url.path}" if url.hostname else None
-    names = list(secrets.get("headers", {}))
+    names = [*secrets.get("headers", {}), *secrets.get("values", {})]
     return ", ".join(names) or None
 
 
@@ -415,15 +427,26 @@ async def _update_own_row(
 async def _run_http(
     config: HttpConfig, secrets: dict[str, Any], values: dict[str, str]
 ) -> dict[str, Any]:
-    url = render(config.url, {k: quote(v, safe="") for k, v in values.items()}, missing="")
-    headers = {k: render(v, values, missing="") for k, v in config.headers.items()}
-    headers.update(HttpSecrets.model_validate(secrets or {}).headers)
+    stored = HttpSecrets.model_validate(secrets or {})
+
+    def with_secrets(text: str, escape: Any = str) -> str:
+        # Secrets go in before the caller's values, so nothing a caller says can pull one in.
+        return SECRET_RE.sub(lambda m: escape(stored.values.get(m.group(1), "")), text)
+
+    url = render(
+        with_secrets(config.url, lambda v: quote(v, safe="")),
+        {k: quote(v, safe="") for k, v in values.items()},
+        missing="",
+    )
+    headers = {k: render(with_secrets(v), values, missing="") for k, v in config.headers.items()}
+    headers.update(stored.headers)
     content: str | None = None
     if config.method != "GET":
         if config.body.strip():
             # Values are JSON-escaped so a caller's words can't break or change the body.
             escaped = {k: json.dumps(v)[1:-1] for k, v in values.items()}
-            content = render(config.body, escaped, missing="")
+            body = with_secrets(config.body, lambda v: json.dumps(v)[1:-1])
+            content = render(body, escaped, missing="")
         else:
             content = json.dumps(values)
         headers.setdefault("Content-Type", "application/json")
@@ -434,9 +457,13 @@ async def _run_http(
         transport=egress.guarded_transport(),
     ) as client:
         response = await client.request(config.method, url, headers=headers, content=content)
-    text = response.text[:MAX_RESULT_CHARS]
+    text = response.text
+    for secret in stored.values.values():  # the agent never gets to see a secret
+        if len(secret) >= 4:
+            text = text.replace(secret, "•••")
+    text = text[:MAX_RESULT_CHARS]
     try:
-        data: Any = response.json()
+        data: Any = json.loads(text)
     except ValueError:
         data = text
     if response.is_error:

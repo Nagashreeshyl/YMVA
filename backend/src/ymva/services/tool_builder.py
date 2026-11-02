@@ -10,7 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ymva.models import Tool, ToolType
 from ymva.security import decrypt_json
 from ymva.services.builder import ask_gemini
-from ymva.services.tools import CONFIG_TYPES, RESERVED_NAMES, ToolParam, placeholders
+from ymva.services.tools import (
+    CONFIG_TYPES,
+    RESERVED_NAMES,
+    HttpSecrets,
+    ToolParam,
+    placeholders,
+    secret_names,
+)
 
 
 class GeneratedColumn(BaseModel):
@@ -60,6 +67,12 @@ during calls. Turn the admin's description into one tool.
   http_body empty unless a specific JSON shape was asked for. Set needs_key if the API needs
   a key or token (most do unless the admin says it's open). Never invent secrets or put a
   key, token or password in any field: the admin adds those in a secure field.
+- Where the API expects a key, token or password, or a fixed value only the admin knows
+  (an account or chat ID), write {{secret.NAME}} (e.g. {{secret.api_key}}, {{secret.chat_id}})
+  in the URL, header or body: the admin fills it in securely. Never make these params and
+  never use a plain {{NAME}} for them. Example, a Telegram message: POST
+  https://api.telegram.org/bot{{secret.bot_token}}/sendMessage with body
+  {"chat_id": "{{secret.chat_id}}", "text": "..."}.
 - For google_sheets, use the sheet link if the admin gave one (sheet_link), else leave it
   empty.
 - If the tool should run after the call to record its results (not during the call), it
@@ -143,7 +156,13 @@ def missing(tool: Tool) -> list[str]:
         url = str(tool.config.get("url", ""))
         if not url.startswith(("http://", "https://")) or "example.com" in url:
             needs.append("address")
-        if tool.parameters_schema.get("needs_key") and not has_secrets:
+        stored = HttpSecrets.model_validate(
+            decrypt_json(tool.encrypted_secrets) if tool.encrypted_secrets else {}
+        )
+        wanted = secret_names(tool.config)
+        if any(not stored.values.get(name) for name in wanted) or (
+            not wanted and tool.parameters_schema.get("needs_key") and not has_secrets
+        ):
             needs.append("key")
     elif tool.type == ToolType.DATABASE and not has_secrets:
         needs.append("key")

@@ -279,3 +279,122 @@ async def test_yma_creates_a_tool_and_asks_for_its_key_securely(
     assert turn["messages"][1]["changes"] == ["Tool updated: save_payment_promise"]
     tool = (await c.get("/api/tools")).json()[0]
     assert tool["is_active"] and tool["missing"] == [] and tool["has_secrets"]
+
+
+async def test_yma_removes_unfinished_tools_and_runs_tests(
+    admin_client: httpx.AsyncClient, _fake_gemini: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ymva.api.routes import builder as builder_route
+    from ymva.services.builder import TestValue, ToolTest
+
+    c = admin_client
+    await _with_key(c)
+    agent = (await c.post("/api/agents", json={"name": "Reminder"})).json()
+    telegram = {
+        "name": "send_telegram_message",
+        "description": "Send the call summary to the team on Telegram.",
+        "type": "http",
+        "config": {
+            "method": "POST",
+            "url": "https://api.telegram.org/bot{{secret.bot_token}}/sendMessage",
+            "body": '{"chat_id": "{{secret.chat_id}}", "text": "{{summary}}"}',
+        },
+        "agent_id": agent["id"],
+    }
+    made = (await c.post("/api/tools", json=telegram)).json()
+    assert made["missing"] == ["key"]  # both secrets still to give
+    unfinished = {
+        **telegram,
+        "name": "save_customer_details_sheet",
+        "config": {"method": "POST", "url": "https://example.com"},
+    }
+    await c.post("/api/tools", json=unfinished)
+
+    async def ran(*_: Any) -> dict[str, Any]:
+        return {"ok": True}
+
+    monkeypatch.setattr(builder_route, "run_tool", ran)
+    # Not ready yet: YMA says what's missing instead of pretending it worked.
+    _fake_gemini.append(
+        AssistantResult(
+            reply="Sending a test.",
+            changes=[],
+            agent=None,
+            test_tool=ToolTest(name="send_telegram_message"),
+        )
+    )
+    turn = (
+        await c.post(f"/api/agents/{agent['id']}/assistant", json={"message": "send me a test"})
+    ).json()
+    assert "can't test send_telegram_message yet" in turn["messages"][1]["content"]
+
+    keyed = await c.put(
+        f"/api/tools/{made['id']}/secrets",
+        json={"secrets": {"values": {"bot_token": "123:abc", "chat_id": "987"}}},
+    )
+    assert keyed.json()["missing"] == [] and keyed.json()["is_active"]
+    _fake_gemini.append(
+        AssistantResult(
+            reply="Sending a test.",
+            changes=[],
+            agent=None,
+            test_tool=ToolTest(
+                name="send_telegram_message", values=[TestValue(name="summary", value="Test")]
+            ),
+            remove_tools=["save_customer_details_sheet"],
+        )
+    )
+    turn = (
+        await c.post(f"/api/agents/{agent['id']}/assistant", json={"message": "no sheets; test it"})
+    ).json()
+    answer = turn["messages"][1]
+    assert "Test: I ran send_telegram_message and it worked." in answer["content"]
+    assert answer["changes"] == ["Tool removed: save_customer_details_sheet"]
+    assert turn["agent"]["config"]["tools"] == ["send_telegram_message"]
+    names = [t["name"] for t in (await c.get("/api/tools")).json()]
+    assert names == ["send_telegram_message"]  # the never-finished sheet tool is gone
+
+
+async def test_yma_attaches_result_senders_after_the_call(
+    admin_client: httpx.AsyncClient, _fake_gemini: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ymva.services import tool_builder
+    from ymva.services.builder import ToolRequest
+    from ymva.services.tool_builder import GeneratedTool
+
+    monkeypatch.setattr(tool_builder, "ask_gemini", builder.ask_gemini)
+    c = admin_client
+    await _with_key(c)
+    agent = (await c.post("/api/agents", json={"name": "Reminder"})).json()
+    ask = "Send the summary of what the customer told to my Telegram"
+    _fake_gemini.extend(
+        [
+            AssistantResult(
+                reply="I'll send each call's summary to Telegram.",
+                changes=[],
+                agent=None,
+                tools=[ToolRequest(name="send_telegram_summary", when="after_call", request=ask)],
+            ),
+            GeneratedTool(
+                name="send_telegram_summary",
+                description="Sends the call summary to Telegram.",
+                type="http",
+                params=[],
+                sheet_action="append_row",
+                sheet_columns=[],
+                sheet_match_column="",
+                sheet_match_value="",
+                http_method="POST",
+                http_url="https://api.telegram.org/bot{{secret.bot_token}}/sendMessage",
+                http_body='{"chat_id": "{{secret.chat_id}}", "text": "{{summary}}"}',
+                db_query="",
+                db_mode="read",
+                needs_key=True,
+            ),
+        ]
+    )
+    turn = (await c.post(f"/api/agents/{agent['id']}/assistant", json={"message": ask})).json()
+    config = turn["agent"]["config"]
+    assert config["analysis"]["send_to"] == ["send_telegram_summary"]
+    assert "send_telegram_summary" not in config["tools"]  # runs once the call ends
+    assert "secure field" in turn["messages"][1]["content"]

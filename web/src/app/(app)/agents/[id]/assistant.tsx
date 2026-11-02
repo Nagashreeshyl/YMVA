@@ -177,7 +177,7 @@ export function Assistant({
             </li>
           ))
         )}
-        <ToolKeys toolNames={agent.config.tools ?? []} />
+        <ToolKeys toolNames={[...(agent.config.tools ?? []), ...(agent.config.analysis?.send_to ?? [])]} />
         {send.isPending && (
           <>
             <li className="flex justify-end">
@@ -266,7 +266,11 @@ function UserMessage({ text }: { text: string }) {
         {text}
       </p>
       {long && (
-        <button type="button" onClick={() => setOpen(!open)} className="text-2xs text-muted underline underline-offset-4">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="text-2xs text-muted underline underline-offset-4"
+        >
           {open ? "Show less" : "Show all"}
         </button>
       )}

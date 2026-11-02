@@ -149,6 +149,32 @@ async def test_http_tool_escapes_caller_words(requests_seen: list[httpx.Request]
     assert result["response"] == {"received": {"note": 'said "pay later", ok'}}
 
 
+async def test_secret_placeholders_are_filled_and_never_shown(
+    requests_seen: list[httpx.Request],
+) -> None:
+    """A Telegram-style API takes its token in the URL: {{secret.NAME}} comes from the tool's
+    encrypted secrets, and the agent never sees it, even if the service echoes it back."""
+    token = "123456:ABC-telegram-token"
+    result = await tools_service.run_tool(
+        "http",
+        {
+            "url": "https://api.example.com/bot{{secret.bot_token}}/sendMessage",
+            "body": '{"chat_id": "{{secret.chat_id}}", "text": "{{customer_name}}: {{note}}"}',
+        },
+        {"values": {"bot_token": token, "chat_id": "987654"}},
+        # A caller saying "{{secret.bot_token}}" must not pull the token into the message.
+        {"customer_name": "Ravi", "note": "{{secret.bot_token}}"},
+    )
+    sent = requests_seen[-1]
+    assert sent.url.path == f"/bot{token}/sendMessage"
+    body = json.loads(sent.content)
+    assert body == {"chat_id": "987654", "text": "Ravi: {{secret.bot_token}}"}
+    assert token not in json.dumps(result)  # the echo is scrubbed before the agent sees it
+    assert tools_service.secret_names(
+        {"url": "x/{{secret.bot_token}}", "b": "{{ secret.chat_id }}"}
+    ) == ["bot_token", "chat_id"]
+
+
 async def test_tool_names_and_deletion_rules(admin_client: httpx.AsyncClient) -> None:
     bad = await admin_client.post("/api/tools", json={**SHEET_TOOL, "name": "end_call"})
     assert bad.status_code == 422
