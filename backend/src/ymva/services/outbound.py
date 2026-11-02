@@ -18,6 +18,7 @@ from ymva.models import (
     PhoneNumber,
     ProviderAccount,
     TelephonyProvider,
+    User,
 )
 from ymva.services.calls import (
     CallSetupError,
@@ -78,6 +79,7 @@ async def start_outbound_call(
     variables: dict[str, Any],
     *,
     use_edits: bool = False,
+    placed_by: User | None = None,
 ) -> Call:
     """Create the call and ask the provider to dial. Raises CallSetupError when the call can't
     start (no published version, lines busy, number off) and TelephonyError when the provider
@@ -114,6 +116,7 @@ async def start_outbound_call(
         phone_number_id=number.id,
         from_number=number.e164,
         to_number=to,
+        placed_by_id=placed_by.id if placed_by else None,
         variables=string_variables(variables),
         # The settings this call runs with, read again by the after-call results.
         agent_config=config.model_dump(mode="json"),

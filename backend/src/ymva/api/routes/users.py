@@ -3,9 +3,10 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import delete, func, select
 
-from ymva.api.deps import AdminUser, DbSession, client_ip
+from ymva.api.deps import DbSession, UserManager, client_ip
 from ymva.api.schemas import UserCreateIn, UserOut, UserUpdateIn
 from ymva.models import Role, User, UserSession
+from ymva.permissions import Perm, can
 from ymva.security import hash_password
 from ymva.services import audit
 
@@ -13,14 +14,15 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 
 @router.get("", response_model=list[UserOut])
-async def list_users(_: AdminUser, db: DbSession) -> list[User]:
+async def list_users(_: UserManager, db: DbSession) -> list[User]:
     return list(await db.scalars(select(User).order_by(User.created_at)))
 
 
 @router.post("", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 async def create_user(
-    body: UserCreateIn, request: Request, admin: AdminUser, db: DbSession
+    body: UserCreateIn, request: Request, admin: UserManager, db: DbSession
 ) -> User:
+    _check_owner_rights(admin, body.role)
     email = body.email.strip().lower()
     if await db.scalar(select(User.id).where(User.email == email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "A user with this email already exists")
@@ -45,10 +47,16 @@ async def create_user(
     return user
 
 
-async def _active_admin_count(db: DbSession) -> int:
+def _check_owner_rights(actor: User, *roles: Role | None) -> None:
+    """Only an owner can make, change or remove an owner."""
+    if Role.OWNER in roles and not can(actor.role, Perm.OWNERS_MANAGE):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only an owner can manage owners")
+
+
+async def _active_owner_count(db: DbSession) -> int:
     return int(
         await db.scalar(
-            select(func.count()).select_from(User).where(User.role == Role.ADMIN, User.is_active)
+            select(func.count()).select_from(User).where(User.role == Role.OWNER, User.is_active)
         )
         or 0
     )
@@ -56,19 +64,20 @@ async def _active_admin_count(db: DbSession) -> int:
 
 @router.patch("/{user_id}", response_model=UserOut)
 async def update_user(
-    user_id: uuid.UUID, body: UserUpdateIn, request: Request, admin: AdminUser, db: DbSession
+    user_id: uuid.UUID, body: UserUpdateIn, request: Request, admin: UserManager, db: DbSession
 ) -> User:
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
 
-    losing_admin = (
-        user.role == Role.ADMIN
+    _check_owner_rights(admin, user.role, body.role)
+    losing_owner = (
+        user.role == Role.OWNER
         and user.is_active
-        and ((body.role is not None and body.role != Role.ADMIN) or body.is_active is False)
+        and ((body.role is not None and body.role != Role.OWNER) or body.is_active is False)
     )
-    if losing_admin and await _active_admin_count(db) <= 1:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "At least one active admin is required")
+    if losing_owner and await _active_owner_count(db) <= 1:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "At least one active owner is required")
 
     changes: dict[str, object] = {}
     if body.name is not None and body.name.strip() != user.name:

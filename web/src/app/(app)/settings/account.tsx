@@ -5,6 +5,7 @@ import { CheckCircle2 } from "lucide-react";
 import { useRef } from "react";
 import { Button, ErrorNotice, Field, Input } from "@/components/ui";
 import { api } from "@/lib/api";
+import { ROLE_LABELS } from "@/lib/permissions";
 import { useMe } from "@/lib/session";
 
 export function AccountSettings() {
@@ -26,7 +27,7 @@ export function AccountSettings() {
           <dt className="text-muted">Email</dt>
           <dd className="break-all">{me?.email}</dd>
           <dt className="text-muted">Access</dt>
-          <dd>{me?.role === "admin" ? "Admin" : "View only"}</dd>
+          <dd>{me ? ROLE_LABELS[me.role] : ""}</dd>
         </dl>
       </section>
 

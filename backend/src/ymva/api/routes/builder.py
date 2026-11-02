@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from ymva.api.deps import AdminUser, CurrentUser, DbSession, client_ip
+from ymva.api.deps import AgentEditor, AgentViewer, DbSession, client_ip
 from ymva.api.routes.agents import AgentDetail, _detail, _get_agent, _latest
 from ymva.models import Agent, AgentAssistantMessage, AgentVersion
 from ymva.redis import get_redis
@@ -50,7 +50,7 @@ class AssistantTurnOut(BaseModel):
     agent: AgentDetail
 
 
-async def _google_key(db: DbSession, admin: AdminUser) -> str:
+async def _google_key(db: DbSession, admin: AgentEditor) -> str:
     if not await ratelimit.hit(get_redis(), f"builder:{admin.id}", BUILDER_REQUESTS_PER_HOUR, 3600):
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS, "Too many AI requests. Try again later."
@@ -97,7 +97,7 @@ def _latest_change(messages: list[AgentAssistantMessage]) -> uuid.UUID | None:
 
 @router.post("/generate", response_model=AgentDetail, status_code=status.HTTP_201_CREATED)
 async def generate(
-    body: GenerateIn, request: Request, admin: AdminUser, db: DbSession
+    body: GenerateIn, request: Request, admin: AgentEditor, db: DbSession
 ) -> AgentDetail:
     """Write a new agent from a plain-English description."""
     key = await _google_key(db, admin)
@@ -148,7 +148,7 @@ async def generate(
 
 @router.get("/{agent_id}/assistant", response_model=list[AssistantMessageOut])
 async def assistant_history(
-    agent_id: uuid.UUID, _: CurrentUser, db: DbSession
+    agent_id: uuid.UUID, _: AgentViewer, db: DbSession
 ) -> list[AssistantMessageOut]:
     await _get_agent(db, agent_id)
     messages = await _messages(db, agent_id)
@@ -158,7 +158,7 @@ async def assistant_history(
 
 @router.post("/{agent_id}/assistant", response_model=AssistantTurnOut)
 async def assistant_turn(
-    agent_id: uuid.UUID, body: AssistantIn, request: Request, admin: AdminUser, db: DbSession
+    agent_id: uuid.UUID, body: AssistantIn, request: Request, admin: AgentEditor, db: DbSession
 ) -> AssistantTurnOut:
     """Ask the assistant something; any change it makes is saved to the draft."""
     agent = await _get_agent(db, agent_id)
@@ -217,7 +217,7 @@ async def assistant_turn(
 
 @router.post("/{agent_id}/assistant/{message_id}/undo", response_model=AgentDetail)
 async def undo_assistant_change(
-    agent_id: uuid.UUID, message_id: uuid.UUID, request: Request, admin: AdminUser, db: DbSession
+    agent_id: uuid.UUID, message_id: uuid.UUID, request: Request, admin: AgentEditor, db: DbSession
 ) -> AgentDetail:
     """Put the draft back the way it was before the assistant's latest change."""
     agent = await _get_agent(db, agent_id)

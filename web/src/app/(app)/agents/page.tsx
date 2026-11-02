@@ -20,6 +20,7 @@ import {
 } from "@/components/ui";
 import { api, type AgentDetail, type AgentOptions, type AgentSummary } from "@/lib/api";
 import { LANGUAGE_NAMES, relativeTime } from "@/lib/format";
+import { can } from "@/lib/permissions";
 import { useMe } from "@/lib/session";
 
 const EXAMPLE_BRIEFS = [
@@ -169,7 +170,7 @@ function NewAgentForm({ onDone }: { onDone: () => void }) {
 
 export default function AgentsPage() {
   const { data: me } = useMe();
-  const canEdit = me?.role === "admin";
+  const canEdit = can(me, "agents.edit");
   const [creating, setCreating] = useState(false);
   const [view, setView] = useState<"active" | "archived">("active");
   const agents = useQuery({

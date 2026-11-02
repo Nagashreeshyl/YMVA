@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
-from ymva.api.deps import AdminUser, CurrentUser, DbSession, client_ip
+from ymva.api.deps import DbSession, IntegrationManager, client_ip
 from ymva.models import AICredential, AIProvider, PhoneNumber, ProviderAccount, TelephonyProvider
 from ymva.security import decrypt_json, encrypt_json
 from ymva.services import audit
@@ -138,7 +138,7 @@ def _account_out(account: ProviderAccount, numbers: int) -> TelephonyAccountOut:
 
 
 @router.get("", response_model=IntegrationsOut)
-async def list_integrations(user: CurrentUser, db: DbSession) -> IntegrationsOut:
+async def list_integrations(user: IntegrationManager, db: DbSession) -> IntegrationsOut:
     credentials = {c.provider: c for c in await db.scalars(select(AICredential))}
     counts = dict(
         (
@@ -170,7 +170,7 @@ async def list_integrations(user: CurrentUser, db: DbSession) -> IntegrationsOut
 
 @router.put("/ai/{provider}", response_model=AIProviderOut)
 async def save_key(
-    provider: AIProvider, body: AIKeyIn, request: Request, admin: AdminUser, db: DbSession
+    provider: AIProvider, body: AIKeyIn, request: Request, admin: IntegrationManager, db: DbSession
 ) -> AIProviderOut:
     credential = await save_ai_key(db, provider, body.api_key.strip(), admin.id)
     await audit.record(
@@ -188,7 +188,7 @@ async def save_key(
 
 
 @router.post("/ai/{provider}/test", response_model=AIProviderOut)
-async def test_key(provider: AIProvider, _: AdminUser, db: DbSession) -> AIProviderOut:
+async def test_key(provider: AIProvider, _: IntegrationManager, db: DbSession) -> AIProviderOut:
     credential = await db.scalar(select(AICredential).where(AICredential.provider == provider))
     if credential is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No key saved for this provider")
@@ -199,7 +199,7 @@ async def test_key(provider: AIProvider, _: AdminUser, db: DbSession) -> AIProvi
 
 @router.delete("/ai/{provider}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_key(
-    provider: AIProvider, request: Request, admin: AdminUser, db: DbSession
+    provider: AIProvider, request: Request, admin: IntegrationManager, db: DbSession
 ) -> None:
     credential = await db.scalar(select(AICredential).where(AICredential.provider == provider))
     if credential is None:
@@ -219,7 +219,7 @@ async def delete_key(
 
 @router.post("/telephony", response_model=TelephonyAccountOut, status_code=status.HTTP_201_CREATED)
 async def add_account(
-    body: TelephonyAccountIn, request: Request, admin: AdminUser, db: DbSession
+    body: TelephonyAccountIn, request: Request, admin: IntegrationManager, db: DbSession
 ) -> TelephonyAccountOut:
     cls = PROVIDERS.get(body.provider)
     if cls is None:
@@ -268,7 +268,7 @@ async def update_account(
     account_id: uuid.UUID,
     body: TelephonyAccountPatch,
     request: Request,
-    admin: AdminUser,
+    admin: IntegrationManager,
     db: DbSession,
 ) -> TelephonyAccountOut:
     account = await _get_account(db, account_id)
@@ -318,7 +318,9 @@ async def update_account(
 
 
 @router.post("/telephony/{account_id}/test", response_model=TelephonyAccountOut)
-async def test_account(account_id: uuid.UUID, _: AdminUser, db: DbSession) -> TelephonyAccountOut:
+async def test_account(
+    account_id: uuid.UUID, _: IntegrationManager, db: DbSession
+) -> TelephonyAccountOut:
     account = await _get_account(db, account_id)
     await verify_account(account)
     await db.commit()
@@ -332,7 +334,7 @@ async def test_account(account_id: uuid.UUID, _: AdminUser, db: DbSession) -> Te
 
 @router.delete("/telephony/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_account(
-    account_id: uuid.UUID, request: Request, admin: AdminUser, db: DbSession
+    account_id: uuid.UUID, request: Request, admin: IntegrationManager, db: DbSession
 ) -> None:
     account = await _get_account(db, account_id)
     numbers = await db.scalar(

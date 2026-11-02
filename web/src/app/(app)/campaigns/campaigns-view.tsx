@@ -21,6 +21,7 @@ import {
   type CampaignStatus,
 } from "@/lib/api";
 import { formatNumber, relativeTime } from "@/lib/format";
+import { can } from "@/lib/permissions";
 import { useMe } from "@/lib/session";
 import { CampaignForm } from "./campaign-form";
 
@@ -47,7 +48,7 @@ export function progress(c: Campaign): number {
 
 export function CampaignsView() {
   const { data: me } = useMe();
-  const canEdit = me?.role === "admin";
+  const canEdit = can(me, "campaigns.manage");
   const router = useRouter();
   const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);

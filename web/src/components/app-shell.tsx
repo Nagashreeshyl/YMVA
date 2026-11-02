@@ -19,6 +19,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { canOpen, ROLE_LABELS } from "@/lib/permissions";
 import { useMe } from "@/lib/session";
 import { Skeleton } from "./ui";
 
@@ -52,9 +53,10 @@ function Wordmark() {
 }
 
 function NavList({ pathname, onNavigate }: { pathname: string | null; onNavigate?: () => void }) {
+  const { data: me } = useMe();
   return (
     <nav aria-label="Main" className="flex flex-col gap-0.5">
-      {NAV.map(({ href, label, icon: Icon }) => {
+      {NAV.filter(({ href }) => me && canOpen(me, href)).map(({ href, label, icon: Icon }) => {
         const active = pathname !== null && isActive(pathname, href);
         return (
           <Link
@@ -123,7 +125,7 @@ function UserFooter() {
       </span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-[13px] font-medium">{me.name}</p>
-        <p className="truncate text-2xs text-muted">{me.role === "admin" ? "Admin" : "View only"}</p>
+        <p className="truncate text-2xs text-muted">{ROLE_LABELS[me.role]}</p>
       </div>
       <button
         type="button"
@@ -137,6 +139,30 @@ function UserFooter() {
       </button>
     </div>
   );
+}
+
+// Pages the role can't use are never rendered (the server refuses their data too).
+function Guarded({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const { data: me, isPending } = useMe();
+  if (isPending) return <Skeleton className="h-96 rounded-xl" />;
+  if (me && !canOpen(me, pathname)) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-24 text-center">
+        <h1 className="font-display text-[28px] font-extrabold tracking-[-0.02em]">No access</h1>
+        <p className="max-w-sm text-muted">
+          Your role ({ROLE_LABELS[me.role]}) can&apos;t open this page. Ask an admin if you need it.
+        </p>
+        <Link
+          href="/"
+          className="mt-2 inline-flex h-10 items-center rounded-full bg-ink px-5 text-sm font-medium text-on-ink"
+        >
+          Back to Overview
+        </Link>
+      </div>
+    );
+  }
+  return children;
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -200,7 +226,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      <main className="mx-auto w-full max-w-[1200px] px-4 py-8 sm:px-8 lg:py-10">{children}</main>
+      <main className="mx-auto w-full max-w-[1200px] px-4 py-8 sm:px-8 lg:py-10">
+        <Suspense fallback={<Skeleton className="h-96 rounded-xl" />}>
+          <Guarded>{children}</Guarded>
+        </Suspense>
+      </main>
     </div>
   );
 }

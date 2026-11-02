@@ -10,7 +10,8 @@ function clock(seconds: number): string {
 }
 
 /** Plays a call's WAV recording. Styled to match the dashboard rather than the browser default. */
-export function RecordingPlayer({ src, downloadName }: { src: string; downloadName: string }) {
+// No downloadName: listen only (the role may not download recordings).
+export function RecordingPlayer({ src, downloadName }: { src: string; downloadName?: string }) {
   const audio = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
@@ -73,6 +74,7 @@ export function RecordingPlayer({ src, downloadName }: { src: string; downloadNa
         className="h-1.5 min-w-0 flex-1 cursor-pointer appearance-none rounded-full [&::-moz-range-thumb]:size-3.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-ink [&::-webkit-slider-thumb]:size-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-ink"
       />
       <span className="tabular w-10 text-[13px] text-muted">{clock(duration)}</span>
+      {downloadName && (
       <a
         href={src}
         download={downloadName}
@@ -82,6 +84,7 @@ export function RecordingPlayer({ src, downloadName }: { src: string; downloadNa
       >
         <Download className="size-4" aria-hidden />
       </a>
+      )}
     </div>
   );
 }

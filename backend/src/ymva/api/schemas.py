@@ -2,9 +2,10 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
 
 from ymva.models import Role
+from ymva.permissions import ROLE_PERMS
 from ymva.security import MIN_PASSWORD_LENGTH
 
 
@@ -20,6 +21,12 @@ class UserOut(ORMModel):
     is_active: bool
     last_login_at: datetime | None
     created_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def permissions(self) -> list[str]:
+        """What this user may do; the dashboard hides everything else."""
+        return sorted(ROLE_PERMS[self.role])
 
 
 class LoginIn(BaseModel):
@@ -91,7 +98,7 @@ class OverviewOut(BaseModel):
     completed_7d: int
     connect_rate_7d: float | None
     avg_duration_seconds_7d: float | None
-    cost_7d: float  # USD, AI plus phone line
+    cost_7d: float | None  # USD, AI plus phone line; None when the role hides costs
     cost_per_minute_7d: float | None  # USD per minute of talk time
     active_calls: int
     agents_active: int

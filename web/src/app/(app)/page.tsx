@@ -15,6 +15,7 @@ import {
   USD_TO_INR,
 } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { can } from "@/lib/permissions";
 import { useMe } from "@/lib/session";
 
 function Stat({
@@ -216,16 +217,18 @@ export default function OverviewPage() {
               value={formatDuration(overview.data.avg_duration_seconds_7d)}
               note="last 7 days"
             />
-            <Stat
-              className="border-t border-l md:border-t-0"
-              label="Cost per minute"
-              value={
-                overview.data.cost_per_minute_7d === null
-                  ? "—"
-                  : `₹${(overview.data.cost_per_minute_7d * USD_TO_INR).toFixed(2)}`
-              }
-              note={`AI + phone line · ₹${(overview.data.cost_7d * USD_TO_INR).toFixed(0)} in 7 days`}
-            />
+            {overview.data.cost_7d !== null && (
+              <Stat
+                className="border-t border-l md:border-t-0"
+                label="Cost per minute"
+                value={
+                  overview.data.cost_per_minute_7d === null
+                    ? "—"
+                    : `₹${(overview.data.cost_per_minute_7d * USD_TO_INR).toFixed(2)}`
+                }
+                note={`AI + phone line · ₹${(overview.data.cost_7d * USD_TO_INR).toFixed(0)} in 7 days`}
+              />
+            )}
           </dl>
 
           <div className="grid items-start gap-6 lg:grid-cols-[1fr_340px]">
@@ -233,7 +236,7 @@ export default function OverviewPage() {
               <DailyCallsChart data={overview.data.daily} />
             </Panel>
             <div className="flex flex-col gap-6">
-              {me?.role === "admin" && <SetupChecklist data={overview.data} />}
+              {can(me, "integrations.manage") && <SetupChecklist data={overview.data} />}
               <Panel title="Agents">
                 <p className="tabular text-2xl font-semibold">
                   {overview.data.agents_active}

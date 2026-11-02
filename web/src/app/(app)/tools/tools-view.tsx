@@ -44,6 +44,7 @@ import {
 import { relativeTime } from "@/lib/format";
 import { SHEETS_APPS_SCRIPT } from "@/lib/sheets-apps-script";
 import { detectVariables } from "@/lib/variables";
+import { can } from "@/lib/permissions";
 import { useMe } from "@/lib/session";
 
 type Draft = Omit<
@@ -1101,7 +1102,7 @@ function ToolForm({
 
 export function ToolsView() {
   const { data: me } = useMe();
-  const canEdit = me?.role === "admin";
+  const canEdit = can(me, "tools.manage");
   const [editing, setEditing] = useState<ToolDef | "new" | null>(null);
   const tools = useQuery({
     queryKey: ["tools"],

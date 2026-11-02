@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
-from ymva.api.deps import AdminUser, CurrentUser, DbSession, client_ip
+from ymva.api.deps import DbSession, SettingsManager, client_ip
 from ymva.config import get_settings
 from ymva.models import AppSetting
 from ymva.redis import get_redis
@@ -32,7 +32,7 @@ async def metrics(request: Request, db: DbSession) -> Response:
 
 
 @router.get("/system/health")
-async def system_health(_: CurrentUser, db: DbSession) -> dict[str, Any]:
+async def system_health(_: SettingsManager, db: DbSession) -> dict[str, Any]:
     snapshot = await monitoring.snapshot(db)
     return {
         "snapshot": monitoring.as_dict(snapshot),
@@ -43,13 +43,13 @@ async def system_health(_: CurrentUser, db: DbSession) -> dict[str, Any]:
 
 
 @router.get("/system/alerts")
-async def get_alerts(_: AdminUser, db: DbSession) -> dict[str, str]:
+async def get_alerts(_: SettingsManager, db: DbSession) -> dict[str, str]:
     return {"webhook_url": await monitoring.alert_webhook(db) or ""}
 
 
 @router.put("/system/alerts")
 async def set_alerts(
-    body: AlertsIn, request: Request, admin: AdminUser, db: DbSession
+    body: AlertsIn, request: Request, admin: SettingsManager, db: DbSession
 ) -> dict[str, str]:
     setting = await db.get(AppSetting, monitoring.ALERT_SETTING)
     if setting is None:
@@ -70,7 +70,7 @@ async def set_alerts(
 
 
 @router.post("/system/alerts/test")
-async def test_alerts(_: AdminUser, db: DbSession) -> dict[str, bool]:
+async def test_alerts(_: SettingsManager, db: DbSession) -> dict[str, bool]:
     url = await monitoring.alert_webhook(db)
     if not url:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Save a webhook address first")

@@ -9,7 +9,11 @@ from ymva.models.base import Base, Timestamps, UUIDPk, str_enum
 
 
 class Role(StrEnum):
+    OWNER = "owner"
     ADMIN = "admin"
+    CAMPAIGN_MANAGER = "campaign_manager"
+    CALLER = "caller"
+    REVIEWER = "reviewer"
     VIEWER = "viewer"
 
 

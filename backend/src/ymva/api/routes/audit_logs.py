@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
-from ymva.api.deps import CurrentUser, DbSession
+from ymva.api.deps import AuditViewer, DbSession
 from ymva.api.schemas import AuditLogOut, Page
 from ymva.models import AuditLog
 
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/audit-logs", tags=["audit"])
 
 @router.get("", response_model=Page[AuditLogOut])
 async def list_audit_logs(
-    _: CurrentUser,
+    _: AuditViewer,
     db: DbSession,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,

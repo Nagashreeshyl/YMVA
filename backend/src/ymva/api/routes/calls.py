@@ -12,9 +12,11 @@ from starlette.websockets import WebSocketDisconnect
 
 from ymva.api.deps import (
     SESSION_COOKIE,
-    AdminUser,
+    CallEditor,
+    CallPlacer,
     CurrentUser,
     DbSession,
+    RecordingListener,
     _user_from_session,
     client_ip,
 )
@@ -33,8 +35,9 @@ from ymva.models import (
     CallStatus,
     PhoneNumber,
     ProviderAccount,
-    Role,
+    User,
 )
+from ymva.permissions import Perm, can
 from ymva.services import analysis, audit
 from ymva.services.calls import (
     ACTIVE_SESSIONS,
@@ -126,9 +129,16 @@ def _call_out(call: Call, agent_names: dict[uuid.UUID, str]) -> dict[str, Any]:
     }
 
 
+def _visible(user: User, call: Call) -> bool:
+    """Callers see only the calls they placed."""
+    return can(user.role, Perm.CALLS_VIEW_ALL) or (
+        call.placed_by_id is not None and call.placed_by_id == user.id
+    )
+
+
 @router.get("", response_model=Page[CallOut])
 async def list_calls(
-    _: CurrentUser,
+    user: CurrentUser,
     db: DbSession,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -138,6 +148,8 @@ async def list_calls(
     outcome: Annotated[str | None, Query(max_length=64)] = None,
 ) -> dict[str, Any]:
     query = select(Call)
+    if not can(user.role, Perm.CALLS_VIEW_ALL):
+        query = query.where(Call.placed_by_id == user.id)
     if outcome:
         query = query.where(Call.outcome == outcome)
     if agent_id:
@@ -156,8 +168,12 @@ async def list_calls(
             select(Agent).where(Agent.id.in_({c.agent_id for c in calls if c.agent_id}))
         )
     }
+    items = [CallOut(**_call_out(c, names)) for c in calls]
+    if not can(user.role, Perm.COSTS_VIEW):
+        for item in items:
+            item.cost_total = None
     return {
-        "items": [CallOut(**_call_out(c, names)) for c in calls],
+        "items": items,
         "total": total or 0,
         "limit": limit,
         "offset": offset,
@@ -165,9 +181,9 @@ async def list_calls(
 
 
 @router.get("/{call_id}", response_model=CallDetail)
-async def get_call(call_id: uuid.UUID, _: CurrentUser, db: DbSession) -> CallDetail:
+async def get_call(call_id: uuid.UUID, user: CurrentUser, db: DbSession) -> CallDetail:
     call = await db.get(Call, call_id)
-    if call is None:
+    if call is None or not _visible(user, call):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Call not found")
     agent = await db.get(Agent, call.agent_id) if call.agent_id else None
     account = (
@@ -178,14 +194,17 @@ async def get_call(call_id: uuid.UUID, _: CurrentUser, db: DbSession) -> CallDet
     events = await db.scalars(
         select(CallEvent).where(CallEvent.call_id == call.id).order_by(CallEvent.seq)
     )
+    out = _call_out(call, {agent.id: agent.name} if agent else {})
+    if not can(user.role, Perm.COSTS_VIEW):
+        out["cost_total"] = None
     return CallDetail(
-        **_call_out(call, {agent.id: agent.name} if agent else {}),
+        **out,
         provider=account.provider.value if account else None,
         has_recording=bool(call.recording_key),
         variables=call.variables or {},
         extracted=call.extracted or {},
         latency=call.latency or {},
-        cost_breakdown=call.cost_breakdown or {},
+        cost_breakdown=(call.cost_breakdown or {}) if can(user.role, Perm.COSTS_VIEW) else {},
         error=call.error,
         events=[
             CallEventOut(
@@ -197,19 +216,20 @@ async def get_call(call_id: uuid.UUID, _: CurrentUser, db: DbSession) -> CallDet
 
 
 @router.post("/{call_id}/analyze", response_model=CallDetail)
-async def analyze(call_id: uuid.UUID, _: AdminUser, db: DbSession) -> CallDetail:
+async def analyze(call_id: uuid.UUID, _: CallEditor, db: DbSession) -> CallDetail:
     """Write (or rewrite) the call's summary, outcome and details from its transcript."""
-    if await db.get(Call, call_id) is None:
+    call = await db.get(Call, call_id)
+    if call is None or not _visible(_, call):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Call not found")
     await analysis.analyze_call(call_id)
-    db.expire_all()
+    db.expire(call)  # not expire_all: the signed-in user is still needed
     return await get_call(call_id, _, db)
 
 
 @router.get("/{call_id}/recording")
-async def get_recording(call_id: uuid.UUID, _: CurrentUser, db: DbSession) -> FileResponse:
+async def get_recording(call_id: uuid.UUID, _: RecordingListener, db: DbSession) -> FileResponse:
     call = await db.get(Call, call_id)
-    if call is None or not call.recording_key:
+    if call is None or not call.recording_key or not _visible(_, call):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No recording for this call")
     try:
         path = recording_path(call.recording_key)
@@ -228,7 +248,7 @@ async def get_recording(call_id: uuid.UUID, _: CurrentUser, db: DbSession) -> Fi
 
 @router.post("/outbound", response_model=CallOut, status_code=status.HTTP_201_CREATED)
 async def place_outbound(
-    body: OutboundIn, request: Request, admin: AdminUser, db: DbSession
+    body: OutboundIn, request: Request, admin: CallPlacer, db: DbSession
 ) -> CallOut:
     agent = await db.get(Agent, body.agent_id)
     number = await db.get(PhoneNumber, body.from_number_id)
@@ -236,7 +256,14 @@ async def place_outbound(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent or number not found")
     try:
         call = await start_outbound_call(
-            db, agent, number, body.to, body.variables, use_edits=body.use_edits
+            db,
+            agent,
+            number,
+            body.to,
+            body.variables,
+            # Only agent editors may call with unpublished edits.
+            use_edits=body.use_edits and can(admin.role, Perm.AGENTS_EDIT),
+            placed_by=admin,
         )
     except CallSetupError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
@@ -258,10 +285,10 @@ async def place_outbound(
 
 @router.post("/{call_id}/hangup", status_code=status.HTTP_202_ACCEPTED)
 async def hang_up(
-    call_id: uuid.UUID, request: Request, admin: AdminUser, db: DbSession
+    call_id: uuid.UUID, request: Request, admin: CallPlacer, db: DbSession
 ) -> dict[str, str]:
     call = await db.get(Call, call_id)
-    if call is None:
+    if call is None or not _visible(admin, call):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Call not found")
     session = ACTIVE_SESSIONS.get(call.id)
     if session is not None and session.task is not None:
@@ -306,7 +333,7 @@ async def browser_call(
     async with get_sessionmaker()() as db:
         token = websocket.cookies.get(SESSION_COOKIE)
         user = await _user_from_session(db, token) if token else None
-        if user is None or user.role != Role.ADMIN:
+        if user is None or not can(user.role, Perm.CALLS_PLACE):
             await websocket.close(code=1008)
             return
         agent = await db.get(Agent, agent_id)
@@ -314,9 +341,11 @@ async def browser_call(
         try:
             if agent is None:
                 raise CallSetupError("Agent not found")
-            version, _ = await runnable_version(db, agent, draft=True)
-            config_used = agent.draft_config or version.config
-            if version_id is not None:
+            # Only agent editors may try unpublished edits or older versions.
+            editor = can(user.role, Perm.AGENTS_EDIT)
+            version, _ = await runnable_version(db, agent, draft=editor)
+            config_used = (agent.draft_config if editor else None) or version.config
+            if version_id is not None and editor:
                 chosen = await db.get(AgentVersion, version_id)
                 if chosen is None or chosen.agent_id != agent.id:
                     raise CallSetupError("That version doesn't belong to this agent")
@@ -333,6 +362,7 @@ async def browser_call(
             direction=CallDirection.WEB,
             status=CallStatus.IN_PROGRESS,
             from_number=f"browser:{user.email}",
+            placed_by_id=user.id,
             agent_config=config_used,
             # Test values for the agent's variables arrive as ?var_customer_name=...
             variables={k[4:]: v for k, v in websocket.query_params.items() if k.startswith("var_")},

@@ -281,7 +281,7 @@ async def test_viewer_cannot_change_integrations_or_place_calls(
     await admin_client.post(
         "/api/auth/login", json={"email": "ceo@yellowmetal.co", "password": "viewer-password-1"}
     )
-    assert (await admin_client.get("/api/integrations")).status_code == 200
+    assert (await admin_client.get("/api/integrations")).status_code == 403
     assert (
         await admin_client.put("/api/integrations/ai/google", json={"api_key": "AIza-12345678"})
     ).status_code == 403

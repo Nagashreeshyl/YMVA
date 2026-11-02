@@ -8,6 +8,7 @@ from ymva.api.deps import CurrentUser, DbSession
 from ymva.api.schemas import DailyPoint, OverviewOut
 from ymva.config import get_settings
 from ymva.models import Agent, AgentStatus, Call, CallStatus, PhoneNumber, ProviderAccount
+from ymva.permissions import Perm, can
 
 router = APIRouter(prefix="/overview", tags=["overview"])
 
@@ -15,7 +16,7 @@ ACTIVE_STATUSES = (CallStatus.RINGING, CallStatus.IN_PROGRESS)
 
 
 @router.get("", response_model=OverviewOut)
-async def overview(_: CurrentUser, db: DbSession) -> OverviewOut:
+async def overview(user: CurrentUser, db: DbSession) -> OverviewOut:
     tz_name = get_settings().timezone
     tz = ZoneInfo(tz_name)
     today = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -84,13 +85,15 @@ async def overview(_: CurrentUser, db: DbSession) -> OverviewOut:
         ).all()
     )
 
+    if not can(user.role, Perm.COSTS_VIEW):
+        cost_7d, seconds_7d = None, 0
     return OverviewOut(
         calls_today=calls_today,
         calls_7d=calls_7d,
         completed_7d=completed_7d,
         connect_rate_7d=(completed_7d / calls_7d) if calls_7d else None,
         avg_duration_seconds_7d=float(avg_duration) if avg_duration is not None else None,
-        cost_7d=float(cost_7d or 0),
+        cost_7d=float(cost_7d) if cost_7d is not None else None,
         cost_per_minute_7d=float(cost_7d or 0) / (seconds_7d / 60) if seconds_7d else None,
         active_calls=active_calls,
         agents_active=await db.scalar(

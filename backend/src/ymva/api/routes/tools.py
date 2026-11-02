@@ -10,7 +10,7 @@ from google.genai import types
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import select
 
-from ymva.api.deps import AdminUser, CurrentUser, DbSession, client_ip
+from ymva.api.deps import DbSession, ToolManager, ToolReader, client_ip
 from ymva.api.routes.agents import _latest
 from ymva.config import get_settings
 from ymva.models import Agent, AgentVersion, Tool, ToolType
@@ -212,13 +212,13 @@ async def _name_free(db: DbSession, name: str, tool_id: uuid.UUID | None = None)
 
 
 @router.get("", response_model=list[ToolOut])
-async def list_tools(_: CurrentUser, db: DbSession) -> list[ToolOut]:
+async def list_tools(_: ToolReader, db: DbSession) -> list[ToolOut]:
     used_by = await _used_by(db)
     return [_out(t, used_by) for t in await db.scalars(select(Tool).order_by(Tool.name))]
 
 
 @router.post("", response_model=ToolOut, status_code=status.HTTP_201_CREATED)
-async def create_tool(body: ToolIn, request: Request, admin: AdminUser, db: DbSession) -> ToolOut:
+async def create_tool(body: ToolIn, request: Request, admin: ToolManager, db: DbSession) -> ToolOut:
     await _name_free(db, body.name)
     tool = Tool(created_by_id=admin.id)
     _apply(tool, body)
@@ -242,7 +242,7 @@ async def create_tool(body: ToolIn, request: Request, admin: AdminUser, db: DbSe
 
 @router.put("/{tool_id}", response_model=ToolOut)
 async def update_tool(
-    tool_id: uuid.UUID, body: ToolIn, request: Request, admin: AdminUser, db: DbSession
+    tool_id: uuid.UUID, body: ToolIn, request: Request, admin: ToolManager, db: DbSession
 ) -> ToolOut:
     tool = await _get(db, tool_id)
     await _name_free(db, body.name, tool.id)
@@ -270,7 +270,7 @@ async def update_tool(
 
 @router.delete("/{tool_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tool(
-    tool_id: uuid.UUID, request: Request, admin: AdminUser, db: DbSession
+    tool_id: uuid.UUID, request: Request, admin: ToolManager, db: DbSession
 ) -> None:
     tool = await _get(db, tool_id)
     users = (await _used_by(db)).get(tool.name)
@@ -293,7 +293,7 @@ async def delete_tool(
 
 @router.post("/{tool_id}/test")
 async def test_tool(
-    tool_id: uuid.UUID, body: TestIn, request: Request, admin: AdminUser, db: DbSession
+    tool_id: uuid.UUID, body: TestIn, request: Request, admin: ToolManager, db: DbSession
 ) -> dict[str, Any]:
     """Run the tool for real with sample values (a test row really is added)."""
     tool = await _get(db, tool_id)
@@ -327,7 +327,7 @@ async def test_tool(
 
 @router.post("/mcp/discover")
 async def discover_mcp_tools(
-    body: McpDiscoverIn, _: AdminUser, db: DbSession
+    body: McpDiscoverIn, _: ToolManager, db: DbSession
 ) -> list[dict[str, Any]]:
     """List the tools an MCP server offers, so the admin can pick one."""
     headers = body.headers
@@ -389,7 +389,7 @@ Fill fields of the other type with empty values."""
 
 
 @router.post("/generate")
-async def generate_tool(body: GenerateIn, admin: AdminUser, db: DbSession) -> dict[str, Any]:
+async def generate_tool(body: GenerateIn, admin: ToolManager, db: DbSession) -> dict[str, Any]:
     """Draft a tool from a plain-English description. Nothing is saved: the admin reviews the
     form, adds the sheet link or secrets, and saves it."""
     if not await ratelimit.hit(get_redis(), f"builder:{admin.id}", 120, 3600):

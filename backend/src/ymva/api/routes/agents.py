@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 
-from ymva.api.deps import AdminUser, CurrentUser, DbSession, client_ip
+from ymva.api.deps import AgentEditor, AgentOpener, AgentViewer, CurrentUser, DbSession, client_ip
 from ymva.models import Agent, AgentStatus, AgentVersion, Call, PhoneNumber, User
 from ymva.services import audit
 from ymva.services.integrations import load_ai_keys
@@ -251,7 +251,7 @@ async def list_agents(_: CurrentUser, db: DbSession, archived: bool = False) -> 
 
 @router.post("", response_model=AgentDetail, status_code=status.HTTP_201_CREATED)
 async def create_agent(
-    body: AgentCreateIn, request: Request, admin: AdminUser, db: DbSession
+    body: AgentCreateIn, request: Request, admin: AgentEditor, db: DbSession
 ) -> AgentDetail:
     config = TEMPLATES[body.template][1]()
     agent = Agent(name=body.name.strip(), description=body.description, created_by_id=admin.id)
@@ -290,7 +290,7 @@ _preview_cache: dict[tuple[str, str, str], bytes] = {}
 
 
 @router.post("/voice-preview")
-async def voice_preview(body: VoicePreviewIn, _: AdminUser, db: DbSession) -> Response:
+async def voice_preview(body: VoicePreviewIn, _: AgentEditor, db: DbSession) -> Response:
     """A short sample of a voice, so you can choose by ear. Cached after the first play."""
     voices = SARVAM_VOICES if body.engine == "sarvam" else GEMINI_LIVE_VOICES
     if body.voice not in voices or body.language not in LANGUAGES:
@@ -332,13 +332,13 @@ async def voice_preview(body: VoicePreviewIn, _: AdminUser, db: DbSession) -> Re
 
 
 @router.get("/{agent_id}", response_model=AgentDetail)
-async def get_agent(agent_id: uuid.UUID, _: CurrentUser, db: DbSession) -> AgentDetail:
+async def get_agent(agent_id: uuid.UUID, _: AgentOpener, db: DbSession) -> AgentDetail:
     return await _detail(db, await _get_agent(db, agent_id))
 
 
 @router.get("/{agent_id}/versions/{version_id}")
 async def get_version(
-    agent_id: uuid.UUID, version_id: uuid.UUID, _: CurrentUser, db: DbSession
+    agent_id: uuid.UUID, version_id: uuid.UUID, _: AgentViewer, db: DbSession
 ) -> dict[str, Any]:
     version = await db.get(AgentVersion, version_id)
     if version is None or version.agent_id != agent_id:
@@ -353,7 +353,7 @@ async def get_version(
 
 @router.patch("/{agent_id}", response_model=AgentDetail)
 async def update_agent(
-    agent_id: uuid.UUID, body: AgentPatchIn, request: Request, admin: AdminUser, db: DbSession
+    agent_id: uuid.UUID, body: AgentPatchIn, request: Request, admin: AgentEditor, db: DbSession
 ) -> AgentDetail:
     agent = await _get_agent(db, agent_id)
     changes: dict[str, object] = {}
@@ -394,7 +394,7 @@ async def update_agent(
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent(
-    agent_id: uuid.UUID, request: Request, admin: AdminUser, db: DbSession
+    agent_id: uuid.UUID, request: Request, admin: AgentEditor, db: DbSession
 ) -> None:
     """Delete an agent and its versions. Its calls stay in history under its name; numbers it
     answered are left without an inbound agent."""
@@ -419,7 +419,7 @@ async def delete_agent(
 
 @router.put("/{agent_id}/draft", response_model=AgentDetail)
 async def save_draft(
-    agent_id: uuid.UUID, body: DraftIn, request: Request, admin: AdminUser, db: DbSession
+    agent_id: uuid.UUID, body: DraftIn, request: Request, admin: AgentEditor, db: DbSession
 ) -> AgentDetail:
     """Save editor changes without creating a version."""
     agent = await _get_agent(db, agent_id)
@@ -446,7 +446,7 @@ async def save_draft(
 
 @router.delete("/{agent_id}/draft", response_model=AgentDetail)
 async def discard_draft(
-    agent_id: uuid.UUID, request: Request, admin: AdminUser, db: DbSession
+    agent_id: uuid.UUID, request: Request, admin: AgentEditor, db: DbSession
 ) -> AgentDetail:
     agent = await _get_agent(db, agent_id)
     if agent.draft_config is not None:
@@ -468,7 +468,7 @@ async def discard_draft(
     "/{agent_id}/versions", response_model=AgentDetail, status_code=status.HTTP_201_CREATED
 )
 async def save_version(
-    agent_id: uuid.UUID, body: VersionIn, request: Request, admin: AdminUser, db: DbSession
+    agent_id: uuid.UUID, body: VersionIn, request: Request, admin: AgentEditor, db: DbSession
 ) -> AgentDetail:
     """Snapshot the draft (or the given config) as a new numbered version."""
     agent = await _get_agent(db, agent_id)
@@ -501,7 +501,7 @@ async def save_version(
 
 @router.post("/{agent_id}/versions/{version_id}/restore", response_model=AgentDetail)
 async def restore_version(
-    agent_id: uuid.UUID, version_id: uuid.UUID, request: Request, admin: AdminUser, db: DbSession
+    agent_id: uuid.UUID, version_id: uuid.UUID, request: Request, admin: AgentEditor, db: DbSession
 ) -> AgentDetail:
     """Load an older version into the editor as the draft."""
     agent = await _get_agent(db, agent_id)
@@ -526,7 +526,7 @@ async def restore_version(
 
 @router.post("/{agent_id}/publish", response_model=AgentDetail)
 async def publish(
-    agent_id: uuid.UUID, body: PublishIn, request: Request, admin: AdminUser, db: DbSession
+    agent_id: uuid.UUID, body: PublishIn, request: Request, admin: AgentEditor, db: DbSession
 ) -> AgentDetail:
     """Make a saved version live, or (without version_id) save the draft as a version and
     make that live."""

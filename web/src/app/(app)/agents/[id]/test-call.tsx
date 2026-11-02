@@ -10,6 +10,8 @@ import { CallDetailsFields } from "@/components/call-details-fields";
 import { callDetails, rememberValues, rememberedValues } from "@/lib/variables";
 import { startBrowserCall, type LiveEvent } from "@/lib/browser-call";
 import { LANGUAGE_NAMES } from "@/lib/format";
+import { can } from "@/lib/permissions";
+import { useMe } from "@/lib/session";
 
 type Line = {
   id: number;
@@ -35,7 +37,12 @@ const CONVERSATION_LABEL: Record<Conversation, string> = {
 
 export function TestCall({ agent }: { agent: AgentDetail }) {
   const queryClient = useQueryClient();
-  const [versionId, setVersionId] = useState<string>(""); // "" = current edits
+  const { data: me } = useMe();
+  // Only people who edit the agent may try unpublished edits or older versions.
+  const canEdit = can(me, "agents.edit");
+  const [versionId, setVersionId] = useState<string>(
+    canEdit ? "" : (agent.published_version_id ?? ""),
+  ); // "" = current edits
   const details = callDetails(agent.config);
   const [values, setValues] = useState<Record<string, string>>(() => rememberedValues(agent.id));
   const [state, setState] = useState<"idle" | "connecting" | "live" | "ended">("idle");
@@ -155,6 +162,7 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
     <div className="grid items-start gap-6 lg:grid-cols-[320px_1fr]">
       <Panel title="Test values" description="Used as this call's customer details.">
         <div className="flex flex-col gap-3">
+          {canEdit && (
           <Field label="Test with">
             {(p) => (
               <Select {...p} value={versionId} disabled={live} onChange={(e) => setVersionId(e.target.value)}>
@@ -168,6 +176,7 @@ export function TestCall({ agent }: { agent: AgentDetail }) {
               </Select>
             )}
           </Field>
+          )}
           {details.length === 0 && (
             <p className="text-[13px] text-muted">
               This agent doesn&apos;t use any {"{{customer details}}"}.

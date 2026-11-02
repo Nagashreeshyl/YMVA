@@ -9,6 +9,7 @@ import { AgentStatusBadge } from "@/components/agent-status";
 import { useConfirm } from "@/components/dialog";
 import { Button, ErrorNotice, Segmented, Skeleton } from "@/components/ui";
 import { api, type AgentDetail, type AgentOptions } from "@/lib/api";
+import { can } from "@/lib/permissions";
 import { useMe } from "@/lib/session";
 import { CallPhone } from "./call-phone";
 import { Assistant } from "./assistant";
@@ -41,11 +42,14 @@ function SaveIndicator({ state, error }: { state: SaveState; error: string | nul
 export function AgentView() {
   const { id } = useParams<{ id: string }>();
   const { data: me } = useMe();
-  const canEdit = me?.role === "admin";
+  const canEdit = can(me, "agents.edit");
+  // Callers open an agent only to call with it: no settings, no versions.
+  const canSee = can(me, "agents.view");
+  const canCall = can(me, "calls.place");
   const queryClient = useQueryClient();
   const router = useRouter();
   const confirm = useConfirm();
-  const [tab, setTab] = useState<Tab>("configure");
+  const [tab, setTab] = useState<Tab>(canSee ? "configure" : "call");
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [saveError, setSaveError] = useState<string | null>(null);
   // Bumped when the draft is replaced from outside the editor, so the editor reloads it.
@@ -271,18 +275,20 @@ export function AgentView() {
           value={tab}
           onChange={setTab}
           options={[
-            { value: "configure", label: "Configure" },
-            ...(canEdit
+            ...(canSee ? [{ value: "configure" as const, label: "Configure" }] : []),
+            ...(canCall
               ? [
                   { value: "test" as const, label: "Test in browser" },
                   { value: "call" as const, label: "Call a phone" },
                 ]
               : []),
-            { value: "versions", label: `Versions (${a.versions.length})` },
+            ...(canSee
+              ? [{ value: "versions" as const, label: `Versions (${a.versions.length})` }]
+              : []),
           ]}
         />
       </div>
-      {tab === "configure" && (
+      {tab === "configure" && canSee && (
         <div
           className={
             canEdit && !archived
@@ -314,9 +320,9 @@ export function AgentView() {
           )}
         </div>
       )}
-      {tab === "test" && canEdit && <TestCall agent={a} />}
-      {tab === "call" && canEdit && <CallPhone agent={a} />}
-      {tab === "versions" && (
+      {tab === "test" && canCall && <TestCall agent={a} />}
+      {tab === "call" && canCall && <CallPhone agent={a} />}
+      {tab === "versions" && canSee && (
         <Versions
           agent={a}
           canEdit={canEdit}

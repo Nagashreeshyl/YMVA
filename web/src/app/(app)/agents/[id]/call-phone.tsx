@@ -7,6 +7,8 @@ import { Button, ErrorNotice, Field, Input, Panel, Select } from "@/components/u
 import { api, type AgentDetail, type CallSummary, type PhoneNumber } from "@/lib/api";
 import { CallDetailsFields } from "@/components/call-details-fields";
 import { callDetails, rememberValues, rememberedValues } from "@/lib/variables";
+import { can } from "@/lib/permissions";
+import { useMe } from "@/lib/session";
 
 export function CallPhone({ agent }: { agent: AgentDetail }) {
   const queryClient = useQueryClient();
@@ -14,7 +16,10 @@ export function CallPhone({ agent }: { agent: AgentDetail }) {
   const details = callDetails(agent.config);
   const [values, setValues] = useState<Record<string, string>>(() => rememberedValues(agent.id));
   // Like the browser test: unpublished edits can be tried on a real phone before publishing.
-  const [useEdits, setUseEdits] = useState(agent.has_unpublished_changes);
+  const { data: me } = useMe();
+  // Only people who edit the agent may call with unpublished edits.
+  const canEdit = can(me, "agents.edit");
+  const [useEdits, setUseEdits] = useState(canEdit && agent.has_unpublished_changes);
   const place = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
       api<CallSummary>("/calls/outbound", { method: "POST", json: body }),
@@ -65,7 +70,7 @@ export function CallPhone({ agent }: { agent: AgentDetail }) {
           });
         }}
       >
-        {agent.has_unpublished_changes && (
+        {canEdit && agent.has_unpublished_changes && (
           <div className="sm:col-span-2">
             <Field
               label="Call with"

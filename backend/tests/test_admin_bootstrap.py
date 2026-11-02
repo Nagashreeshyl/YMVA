@@ -32,7 +32,7 @@ async def test_changing_admin_email_in_env_moves_first_admin(
     assert (await login(client, ADMIN_EMAIL, ADMIN_PASSWORD)).status_code == 401
     resp = await login(client, NEW_EMAIL, NEW_PASSWORD)
     assert resp.status_code == 200
-    assert resp.json()["role"] == "admin"
+    assert resp.json()["role"] == "owner"
 
     actions = [i["action"] for i in (await client.get("/api/audit-logs")).json()["items"]]
     assert "user.admin_sync" in actions

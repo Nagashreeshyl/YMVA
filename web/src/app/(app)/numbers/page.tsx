@@ -17,6 +17,7 @@ import {
 } from "@/components/ui";
 import { useConfirm } from "@/components/dialog";
 import { api, type AgentSummary, type Integrations, type PhoneNumber } from "@/lib/api";
+import { can } from "@/lib/permissions";
 import { useMe } from "@/lib/session";
 
 function AddNumberForm({
@@ -182,7 +183,7 @@ function NumberRow({
 
 export default function NumbersPage() {
   const { data: me } = useMe();
-  const canEdit = me?.role === "admin";
+  const canEdit = can(me, "numbers.manage");
   const [adding, setAdding] = useState(false);
   const numbers = useQuery({ queryKey: ["numbers"], queryFn: () => api<PhoneNumber[]>("/numbers") });
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api<AgentSummary[]>("/agents") });

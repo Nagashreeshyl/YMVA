@@ -16,14 +16,20 @@ import {
 import { useConfirm } from "@/components/dialog";
 import { api, type Role, type User } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
+import { can, ROLE_HINTS, ROLE_LABELS } from "@/lib/permissions";
+import { useMe } from "@/lib/session";
 
-const ROLE_LABEL: Record<Role, string> = {
-  admin: "Admin",
-  viewer: "View only",
-};
+/** Roles this user may hand out: only owners can make owners. */
+function useAssignableRoles(): Role[] {
+  const { data: me } = useMe();
+  const roles = Object.keys(ROLE_LABELS) as Role[];
+  return can(me, "owners.manage") ? roles : roles.filter((r) => r !== "owner");
+}
 
 function AddPersonForm({ onDone }: { onDone: () => void }) {
   const queryClient = useQueryClient();
+  const roles = useAssignableRoles();
+  const [role, setRole] = useState<Role>("viewer");
   const create = useMutation({
     mutationFn: (body: Record<string, FormDataEntryValue | null>) =>
       api<User>("/users", { method: "POST", json: body }),
@@ -54,14 +60,14 @@ function AddPersonForm({ onDone }: { onDone: () => void }) {
       <Field label="Email">
         {(p) => <Input {...p} name="email" type="email" required />}
       </Field>
-      <Field
-        label="Access"
-        hint="View only can see everything but change nothing."
-      >
+      <Field label="Access" hint={ROLE_HINTS[role]}>
         {(p) => (
-          <Select {...p} name="role" defaultValue="viewer">
-            <option value="viewer">View only</option>
-            <option value="admin">Admin</option>
+          <Select {...p} name="role" value={role} onChange={(e) => setRole(e.target.value as Role)}>
+            {roles.map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r]}
+              </option>
+            ))}
           </Select>
         )}
       </Field>
@@ -98,6 +104,9 @@ function AddPersonForm({ onDone }: { onDone: () => void }) {
 }
 
 function PersonRow({ user, isSelf }: { user: User; isSelf: boolean }) {
+  const roles = useAssignableRoles();
+  // Admins can't change or remove owners.
+  const locked = !roles.includes(user.role);
   const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [resetting, setResetting] = useState(false);
@@ -131,18 +140,18 @@ function PersonRow({ user, isSelf }: { user: User; isSelf: boolean }) {
           </span>
           <Select
             aria-label={`Access for ${user.name}`}
-            className="h-8 w-[130px] text-[13px]"
+            className="h-8 w-[170px] text-[13px]"
             value={user.role}
-            disabled={update.isPending}
+            disabled={update.isPending || locked}
             onChange={(e) => update.mutate({ role: e.target.value as Role })}
           >
-            {Object.entries(ROLE_LABEL).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
+            {(roles.includes(user.role) ? roles : [user.role]).map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r]}
               </option>
             ))}
           </Select>
-          {!isSelf && (
+          {!isSelf && !locked && (
             <>
               <Button
                 variant="secondary"

@@ -38,6 +38,7 @@ import {
   type Page,
 } from "@/lib/api";
 import { formatDateTime, formatNumber } from "@/lib/format";
+import { can } from "@/lib/permissions";
 import { useMe } from "@/lib/session";
 import { CampaignForm } from "../campaign-form";
 import { CampaignStatusBadge, progress } from "../campaigns-view";
@@ -326,7 +327,7 @@ function Contacts({ campaignId, live }: { campaignId: string; live: boolean }) {
 export function CampaignView() {
   const { id } = useParams<{ id: string }>();
   const { data: me } = useMe();
-  const canEdit = me?.role === "admin";
+  const canEdit = can(me, "campaigns.manage");
   const router = useRouter();
   const confirm = useConfirm();
   const queryClient = useQueryClient();

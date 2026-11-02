@@ -51,7 +51,7 @@ async def ensure_admin(session: AsyncSession) -> None:
     email, name, password = env
 
     if not await session.scalar(select(func.count()).select_from(User)):
-        admin = User(email=email, name=name, password_hash=hash_password(password), role=Role.ADMIN)
+        admin = User(email=email, name=name, password_hash=hash_password(password), role=Role.OWNER)
         session.add(admin)
         await session.flush()
         await audit.record(
@@ -80,7 +80,7 @@ async def ensure_admin(session: AsyncSession) -> None:
     original.email = email
     original.name = name
     original.password_hash = hash_password(password)
-    original.role = Role.ADMIN
+    original.role = Role.OWNER
     original.is_active = True
     await session.execute(delete(UserSession).where(UserSession.user_id == original.id))
     await audit.record(
@@ -105,10 +105,10 @@ async def reset_admin(session: AsyncSession) -> str:
     user = await session.scalar(select(User).where(User.email == email))
     created = user is None
     if user is None:
-        user = User(email=email, name=name, password_hash="", role=Role.ADMIN)
+        user = User(email=email, name=name, password_hash="", role=Role.OWNER)
         session.add(user)
     user.password_hash = hash_password(password)
-    user.role = Role.ADMIN
+    user.role = Role.OWNER
     user.is_active = True
     await session.flush()
     await session.execute(delete(UserSession).where(UserSession.user_id == user.id))

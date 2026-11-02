@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 
-from ymva.api.deps import AdminUser, CurrentUser, DbSession, client_ip
+from ymva.api.deps import DbSession, DncManager, client_ip
 from ymva.api.routes.numbers import normalise_e164
 from ymva.models import DoNotCall
 from ymva.services import audit
@@ -31,7 +31,7 @@ class DoNotCallIn(BaseModel):
 
 
 @router.get("")
-async def list_numbers(_: CurrentUser, db: DbSession) -> list[DoNotCallOut]:
+async def list_numbers(_: DncManager, db: DbSession) -> list[DoNotCallOut]:
     rows = await db.scalars(select(DoNotCall).order_by(DoNotCall.created_at.desc()))
     return [
         DoNotCallOut(
@@ -47,7 +47,7 @@ async def list_numbers(_: CurrentUser, db: DbSession) -> list[DoNotCallOut]:
 
 @router.post("")
 async def add_numbers(
-    body: DoNotCallIn, request: Request, admin: AdminUser, db: DbSession
+    body: DoNotCallIn, request: Request, admin: DncManager, db: DbSession
 ) -> dict[str, int]:
     phones, bad = set(), []
     for raw in body.numbers.replace(",", "\n").replace(";", "\n").splitlines():
@@ -84,7 +84,7 @@ async def add_numbers(
 @router.post("/{phone}/approve")
 async def approve_number(
     request: Request,
-    admin: AdminUser,
+    admin: DncManager,
     db: DbSession,
     phone: str = Path(pattern=r"^\+\d{6,15}$"),
 ) -> dict[str, bool]:
@@ -109,7 +109,7 @@ async def approve_number(
 @router.delete("/{phone}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_number(
     request: Request,
-    admin: AdminUser,
+    admin: DncManager,
     db: DbSession,
     phone: str = Path(pattern=r"^\+\d{6,15}$"),
 ) -> None:

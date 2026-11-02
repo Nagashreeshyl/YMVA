@@ -9,6 +9,7 @@ import { RecordingPlayer } from "@/components/recording-player";
 import { Badge, Button, ErrorNotice, Panel, Skeleton } from "@/components/ui";
 import { api, type CallDetail, type CallEvent } from "@/lib/api";
 import { formatDateTime, formatDuration, formatNumber, humanize, LANGUAGE_NAMES, USD_TO_INR } from "@/lib/format";
+import { can } from "@/lib/permissions";
 import { useMe } from "@/lib/session";
 
 const LIVE = ["queued", "ringing", "in_progress"];
@@ -133,7 +134,8 @@ export function CallView() {
           <p className="mt-1 flex flex-wrap items-center gap-x-2 text-muted">
             <DirectionLabel direction={c.direction} />
             <span>· {formatDateTime(c.created_at)}</span>
-            {c.agent_name && (
+            {c.agent_name && !can(me, "agents.view") && <span>· {c.agent_name}</span>}
+            {c.agent_name && can(me, "agents.view") && (
               <span>
                 ·{" "}
                 <Link
@@ -146,18 +148,22 @@ export function CallView() {
             )}
           </p>
         </div>
-        {me?.role === "admin" && LIVE.includes(c.status) && (
+        {can(me, "calls.place") && LIVE.includes(c.status) && (
           <Button variant="secondary" loading={hangup.isPending} onClick={() => hangup.mutate()}>
             End call
           </Button>
         )}
       </header>
 
-      {c.has_recording && (
+      {c.has_recording && can(me, "recordings.listen") && (
         <Panel title="Recording" className="mb-6">
           <RecordingPlayer
             src={`/api/calls/${c.id}/recording`}
-            downloadName={`call-${c.created_at.slice(0, 10)}-${c.id.slice(0, 8)}.wav`}
+            downloadName={
+              can(me, "recordings.download")
+                ? `call-${c.created_at.slice(0, 10)}-${c.id.slice(0, 8)}.wav`
+                : undefined
+            }
           />
         </Panel>
       )}
@@ -166,7 +172,7 @@ export function CallView() {
           title="Summary"
           className="mb-6"
           actions={
-            me?.role === "admin" && c.events.length > 0 ? (
+            can(me, "calls.edit") && c.events.length > 0 ? (
               <Button variant="ghost" size="sm" loading={analyze.isPending} onClick={() => analyze.mutate()}>
                 {c.summary ? "Analyse again" : "Analyse now"}
               </Button>

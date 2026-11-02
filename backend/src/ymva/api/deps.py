@@ -1,12 +1,13 @@
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ymva.db import get_session
-from ymva.models import ApiKey, Role, User, UserSession
+from ymva.models import ApiKey, User, UserSession
+from ymva.permissions import Perm, can
 from ymva.security import hash_token
 
 SESSION_COOKIE = "ymva_session"
@@ -67,11 +68,36 @@ async def current_user(request: Request, db: DbSession) -> User:
     return user
 
 
-async def require_admin(user: Annotated[User, Depends(current_user)]) -> User:
-    if user.role != Role.ADMIN:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin access required")
-    return user
+def allowed(*perms: Perm) -> Any:
+    """A signed-in user whose role has any of `perms`."""
+
+    async def check(user: Annotated[User, Depends(current_user)]) -> User:
+        if not any(can(user.role, p) for p in perms):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Your role doesn't allow this")
+        return user
+
+    return Depends(check)
 
 
 CurrentUser = Annotated[User, Depends(current_user)]
-AdminUser = Annotated[User, Depends(require_admin)]
+
+P = Perm
+AgentEditor = Annotated[User, allowed(P.AGENTS_EDIT)]
+AgentViewer = Annotated[User, allowed(P.AGENTS_VIEW)]
+# Callers open an agent only to call from it.
+AgentOpener = Annotated[User, allowed(P.AGENTS_VIEW, P.CALLS_PLACE)]
+CallPlacer = Annotated[User, allowed(P.CALLS_PLACE)]
+CallEditor = Annotated[User, allowed(P.CALLS_EDIT)]
+RecordingListener = Annotated[User, allowed(P.RECORDINGS_LISTEN)]
+CampaignViewer = Annotated[User, allowed(P.CAMPAIGNS_VIEW)]
+CampaignManager = Annotated[User, allowed(P.CAMPAIGNS_MANAGE)]
+NumberViewer = Annotated[User, allowed(P.NUMBERS_VIEW)]
+NumberManager = Annotated[User, allowed(P.NUMBERS_MANAGE)]
+# The agent editor shows the tools an agent uses, read-only for viewers.
+ToolReader = Annotated[User, allowed(P.TOOLS_MANAGE, P.AGENTS_VIEW)]
+ToolManager = Annotated[User, allowed(P.TOOLS_MANAGE)]
+IntegrationManager = Annotated[User, allowed(P.INTEGRATIONS_MANAGE)]
+SettingsManager = Annotated[User, allowed(P.SETTINGS_MANAGE)]
+DncManager = Annotated[User, allowed(P.DNC_MANAGE)]
+UserManager = Annotated[User, allowed(P.USERS_MANAGE)]
+AuditViewer = Annotated[User, allowed(P.AUDIT_VIEW)]

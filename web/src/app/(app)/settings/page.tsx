@@ -3,6 +3,7 @@
 import clsx from "clsx";
 import { useState } from "react";
 import { PageHeader } from "@/components/ui";
+import { can } from "@/lib/permissions";
 import { useMe } from "@/lib/session";
 import { AccountSettings } from "./account";
 import { AuditLogList } from "./audit-log";
@@ -14,16 +15,24 @@ type Tab = "team" | "health" | "dnc" | "audit" | "account";
 
 export default function SettingsPage() {
   const { data: me } = useMe();
-  const isAdmin = me?.role === "admin";
-  const tabs: { id: Tab; label: string }[] = [
-    ...(isAdmin ? [{ id: "team" as const, label: "Team" }] : []),
-    { id: "health", label: "Health & alerts" },
-    { id: "dnc", label: "Do not call" },
-    { id: "audit", label: "Audit log" },
-    { id: "account", label: "Your account" },
-  ];
+  const allowed: Record<Tab, boolean> = {
+    team: can(me, "users.manage"),
+    health: can(me, "settings.manage"),
+    dnc: can(me, "dnc.manage"),
+    audit: can(me, "audit.view"),
+    account: true,
+  };
+  const tabs = (
+    [
+      { id: "team", label: "Team" },
+      { id: "health", label: "Health & alerts" },
+      { id: "dnc", label: "Do not call" },
+      { id: "audit", label: "Audit log" },
+      { id: "account", label: "Your account" },
+    ] as const
+  ).filter((t) => allowed[t.id]);
   const [selected, setSelected] = useState<Tab | null>(null);
-  const tab = selected ?? (isAdmin ? "team" : "audit");
+  const tab = selected ?? tabs[0].id;
 
   return (
     <>
@@ -57,10 +66,10 @@ export default function SettingsPage() {
         ))}
       </div>
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-        {tab === "team" && isAdmin && <TeamSettings currentUserId={me.id} />}
-        {tab === "health" && <HealthSettings canEdit={isAdmin} />}
-        {tab === "dnc" && <DoNotCallSettings canEdit={isAdmin} />}
-        {tab === "audit" && <AuditLogList />}
+        {tab === "team" && allowed.team && me && <TeamSettings currentUserId={me.id} />}
+        {tab === "health" && allowed.health && <HealthSettings canEdit />}
+        {tab === "dnc" && allowed.dnc && <DoNotCallSettings canEdit />}
+        {tab === "audit" && allowed.audit && <AuditLogList />}
         {tab === "account" && <AccountSettings />}
       </div>
     </>

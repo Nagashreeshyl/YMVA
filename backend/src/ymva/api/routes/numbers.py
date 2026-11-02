@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
-from ymva.api.deps import AdminUser, CurrentUser, DbSession, client_ip
+from ymva.api.deps import DbSession, NumberManager, NumberViewer, client_ip
 from ymva.models import Agent, PhoneNumber, ProviderAccount
 from ymva.services import audit
 
@@ -82,14 +82,14 @@ async def _check_agent(db: DbSession, agent_id: uuid.UUID | None) -> None:
 
 
 @router.get("", response_model=list[NumberOut])
-async def list_numbers(_: CurrentUser, db: DbSession) -> list[NumberOut]:
+async def list_numbers(_: NumberViewer, db: DbSession) -> list[NumberOut]:
     numbers = await db.scalars(select(PhoneNumber).order_by(PhoneNumber.created_at))
     return [await _out(db, n) for n in numbers]
 
 
 @router.post("", response_model=NumberOut, status_code=status.HTTP_201_CREATED)
 async def add_number(
-    body: NumberIn, request: Request, admin: AdminUser, db: DbSession
+    body: NumberIn, request: Request, admin: NumberManager, db: DbSession
 ) -> NumberOut:
     if await db.get(ProviderAccount, body.provider_account_id) is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Telephony account not found")
@@ -114,7 +114,7 @@ async def add_number(
 
 @router.patch("/{number_id}", response_model=NumberOut)
 async def update_number(
-    number_id: uuid.UUID, body: NumberPatch, request: Request, admin: AdminUser, db: DbSession
+    number_id: uuid.UUID, body: NumberPatch, request: Request, admin: NumberManager, db: DbSession
 ) -> NumberOut:
     number = await db.get(PhoneNumber, number_id)
     if number is None:
@@ -151,7 +151,7 @@ async def update_number(
 
 @router.delete("/{number_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_number(
-    number_id: uuid.UUID, request: Request, admin: AdminUser, db: DbSession
+    number_id: uuid.UUID, request: Request, admin: NumberManager, db: DbSession
 ) -> None:
     number = await db.get(PhoneNumber, number_id)
     if number is None:

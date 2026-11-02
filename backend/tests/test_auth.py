@@ -18,7 +18,7 @@ async def test_requires_sign_in(client: httpx.AsyncClient) -> None:
 async def test_login_me_logout(client: httpx.AsyncClient) -> None:
     resp = await login(client, ADMIN_EMAIL.upper(), ADMIN_PASSWORD)
     assert resp.status_code == 200
-    assert resp.json()["role"] == "admin"
+    assert resp.json()["role"] == "owner"
     cookie = resp.headers["set-cookie"].lower()
     assert "httponly" in cookie and "samesite=lax" in cookie
 

@@ -1,3 +1,5 @@
+import type { Perm } from "@/lib/permissions";
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -46,7 +48,7 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
 }
 
-export type Role = "admin" | "viewer";
+export type Role = "owner" | "admin" | "campaign_manager" | "caller" | "reviewer" | "viewer";
 
 export interface User {
   id: string;
@@ -56,6 +58,7 @@ export interface User {
   is_active: boolean;
   last_login_at: string | null;
   created_at: string;
+  permissions: Perm[];
 }
 
 export interface Overview {
@@ -64,7 +67,8 @@ export interface Overview {
   completed_7d: number;
   connect_rate_7d: number | null;
   avg_duration_seconds_7d: number | null;
-  cost_7d: number;
+  /** null when the role hides costs. */
+  cost_7d: number | null;
   /** USD per minute of talk time (AI + phone line); null with no calls yet. */
   cost_per_minute_7d: number | null;
   active_calls: number;

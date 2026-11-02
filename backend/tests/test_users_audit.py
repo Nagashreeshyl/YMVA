@@ -33,7 +33,7 @@ async def test_viewer_is_read_only(admin_client: httpx.AsyncClient) -> None:
     assert (await login(admin_client, VIEWER["email"], VIEWER["password"])).status_code == 200
 
     assert (await admin_client.get("/api/overview")).status_code == 200
-    assert (await admin_client.get("/api/audit-logs")).status_code == 200
+    assert (await admin_client.get("/api/audit-logs")).status_code == 403
     assert (await admin_client.get("/api/users")).status_code == 403
     assert (await admin_client.post("/api/users", json=VIEWER)).status_code == 403
 

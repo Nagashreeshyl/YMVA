@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 
-from ymva.api.deps import AdminUser, CurrentUser, DbSession, client_ip
+from ymva.api.deps import CampaignManager, CampaignViewer, DbSession, client_ip
 from ymva.api.routes.numbers import normalise_e164
 from ymva.models import (
     Agent,
@@ -175,14 +175,14 @@ def _apply(campaign: Campaign, body: CampaignIn) -> None:
 
 
 @router.get("", response_model=list[CampaignOut])
-async def list_campaigns(_: CurrentUser, db: DbSession) -> list[CampaignOut]:
+async def list_campaigns(_: CampaignViewer, db: DbSession) -> list[CampaignOut]:
     campaigns = await db.scalars(select(Campaign).order_by(Campaign.created_at.desc()))
     return [await _out(db, c) for c in campaigns]
 
 
 @router.post("", response_model=CampaignOut, status_code=status.HTTP_201_CREATED)
 async def create_campaign(
-    body: CampaignIn, request: Request, admin: AdminUser, db: DbSession
+    body: CampaignIn, request: Request, admin: CampaignManager, db: DbSession
 ) -> CampaignOut:
     await _check_refs(db, body)
     campaign = Campaign(created_by_id=admin.id)
@@ -204,13 +204,17 @@ async def create_campaign(
 
 
 @router.get("/{campaign_id}", response_model=CampaignOut)
-async def get_campaign(campaign_id: uuid.UUID, _: CurrentUser, db: DbSession) -> CampaignOut:
+async def get_campaign(campaign_id: uuid.UUID, _: CampaignViewer, db: DbSession) -> CampaignOut:
     return await _out(db, await _get(db, campaign_id))
 
 
 @router.put("/{campaign_id}", response_model=CampaignOut)
 async def update_campaign(
-    campaign_id: uuid.UUID, body: CampaignIn, request: Request, admin: AdminUser, db: DbSession
+    campaign_id: uuid.UUID,
+    body: CampaignIn,
+    request: Request,
+    admin: CampaignManager,
+    db: DbSession,
 ) -> CampaignOut:
     campaign = await _get(db, campaign_id)
     await _check_refs(db, body)
@@ -231,7 +235,7 @@ async def update_campaign(
 
 @router.post("/{campaign_id}/start", response_model=CampaignOut)
 async def start_campaign(
-    campaign_id: uuid.UUID, request: Request, admin: AdminUser, db: DbSession
+    campaign_id: uuid.UUID, request: Request, admin: CampaignManager, db: DbSession
 ) -> CampaignOut:
     campaign = await _get(db, campaign_id)
     agent = await db.get(Agent, campaign.agent_id) if campaign.agent_id else None
@@ -269,7 +273,7 @@ async def start_campaign(
 
 @router.post("/{campaign_id}/pause", response_model=CampaignOut)
 async def pause_campaign(
-    campaign_id: uuid.UUID, request: Request, admin: AdminUser, db: DbSession
+    campaign_id: uuid.UUID, request: Request, admin: CampaignManager, db: DbSession
 ) -> CampaignOut:
     """Stop placing new calls; calls already in progress finish normally."""
     campaign = await _get(db, campaign_id)
@@ -291,7 +295,7 @@ async def pause_campaign(
 
 @router.delete("/{campaign_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_campaign(
-    campaign_id: uuid.UUID, request: Request, admin: AdminUser, db: DbSession
+    campaign_id: uuid.UUID, request: Request, admin: CampaignManager, db: DbSession
 ) -> None:
     campaign = await _get(db, campaign_id)
     if campaign.status == CampaignStatus.RUNNING:
@@ -331,7 +335,7 @@ async def _sheet_csv(url: str) -> str:
 
 @router.post("/{campaign_id}/contacts")
 async def import_contacts(
-    campaign_id: uuid.UUID, body: ImportIn, request: Request, admin: AdminUser, db: DbSession
+    campaign_id: uuid.UUID, body: ImportIn, request: Request, admin: CampaignManager, db: DbSession
 ) -> dict[str, Any]:
     """Add contacts from a CSV (first row = column titles). Every other column becomes a
     customer detail, e.g. 'Customer Name' -> {{customer_name}}. Duplicates are skipped."""
@@ -441,7 +445,7 @@ async def _contact_rows(
 @router.get("/{campaign_id}/contacts")
 async def list_contacts(
     campaign_id: uuid.UUID,
-    _: CurrentUser,
+    _: CampaignViewer,
     db: DbSession,
     contact_status: Annotated[ContactStatus | None, Query(alias="status")] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
@@ -464,7 +468,7 @@ async def list_contacts(
 
 
 @router.get("/{campaign_id}/export.csv")
-async def export_results(campaign_id: uuid.UUID, _: CurrentUser, db: DbSession) -> Response:
+async def export_results(campaign_id: uuid.UUID, _: CampaignManager, db: DbSession) -> Response:
     """Every contact with its result: their details, status, outcome, summary and details."""
     campaign = await _get(db, campaign_id)
     contacts = await _contact_rows(db, campaign_id)

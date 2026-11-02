@@ -32,6 +32,7 @@ import {
   type TelephonyProviderInfo,
 } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
+import { can } from "@/lib/permissions";
 import { useMe } from "@/lib/session";
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -545,7 +546,7 @@ function ConnectAccountForm({
 
 export default function IntegrationsPage() {
   const { data: me } = useMe();
-  const canEdit = me?.role === "admin";
+  const canEdit = can(me, "integrations.manage");
   const [connecting, setConnecting] = useState(false);
   const data = useQuery({
     queryKey: ["integrations"],
