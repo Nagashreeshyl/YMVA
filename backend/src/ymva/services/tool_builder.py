@@ -132,7 +132,7 @@ async def draft_tool(
 def missing(tool: Tool) -> list[str]:
     """What the admin still has to give before the tool can run: "link" (the Google Sheet's
     link), "address" (the API's URL) or "key" (a secret, added in a secure field)."""
-    has_secrets = bool(tool.encrypted_secrets) and bool(decrypt_json(tool.encrypted_secrets))
+    has_secrets = bool(tool.encrypted_secrets and decrypt_json(tool.encrypted_secrets))
     needs: list[str] = []
     if tool.type == ToolType.GOOGLE_SHEETS:
         if len(tool.config.get("spreadsheet", "")) < 10:

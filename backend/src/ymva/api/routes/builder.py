@@ -294,7 +294,8 @@ async def assistant_turn(
         )
     except BuilderError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
-    tool_changes, tool_notes = [], []
+    tool_changes: list[str] = []
+    tool_notes: list[str] = []
     if result.tools:
         updated, tool_changes, tool_notes = await _make_tools(
             db, admin, request, key, result.tools, updated or AgentConfig.model_validate(before)
