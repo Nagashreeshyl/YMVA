@@ -2,6 +2,51 @@
 
 Yellow Metal's platform for AI phone agents: build agents in plain English, call customers in their own language over any telephony provider, and keep a complete history of every call. See [docs/PLAN.md](docs/PLAN.md) for the full architecture and roadmap.
 
+## Quick start: copy, paste, run
+
+Each step is one line. Run them in order in a terminal, on any Mac, Windows (WSL) or Linux
+computer or server.
+
+**Step 1: install Docker** (skip if you have it). On Mac or Windows install
+[Docker Desktop](https://www.docker.com/products/docker-desktop/) and open it. On a Linux
+server:
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+```
+
+**Step 2: download and run YMVA, A to Z.** This one line downloads YMVA, creates its secrets,
+builds everything (dashboard, voice server, database, and the n8n node), starts it, and prints
+the admin sign-in. The repository is private, so GitHub asks you to sign in (use a
+[personal access token](https://github.com/settings/tokens) as the password), or use
+`gh repo clone Nagashreeshyl/YMVA` instead of `git clone` if you have the GitHub CLI.
+
+```bash
+git clone https://github.com/Nagashreeshyl/YMVA.git && cd YMVA && ./ymva start
+```
+
+Open <http://localhost> and sign in. To take real phone calls, YMVA needs a public address:
+add `--tunnel` for a temporary one, or `--domain voice.yellowmetal.co` on a server with that
+domain pointed at it (HTTPS is set up automatically):
+
+```bash
+./ymva start --domain voice.yellowmetal.co
+```
+
+**Step 3: add the YMVA node to n8n.** On the n8n server, one line installs (or updates) the
+node straight from YMVA. Use your YMVA address and your n8n container's name (`docker ps`
+shows it):
+
+```bash
+docker exec -u node n8n sh -c 'mkdir -p ~/.n8n/nodes && cd ~/.n8n/nodes && npm install --legacy-peer-deps https://YOUR-YMVA-ADDRESS/downloads/n8n-nodes-ymva.tgz' && docker restart n8n
+```
+
+Then in YMVA create an API key (**Settings → API keys**) and add it in n8n as a **YMVA API**
+credential. Other applications use the same key: see
+[docs/INTEGRATION-GUIDE.md](docs/INTEGRATION-GUIDE.md).
+
+**Later:** `./ymva update` gets the newest version (backing up first), `./ymva stop` stops it.
+
 ## Run it
 
 You need **Docker** (Docker Desktop on Mac/Windows, Docker Engine on Linux). Then:
