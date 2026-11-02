@@ -44,8 +44,15 @@ How to speak on a phone call:
   them in the current language (for example "five thousand two hundred rupees", "the 26th of
   October at 3 PM").
 - If you didn't understand, politely ask the caller to repeat.
-- If the caller asks you something (who you are, why you are calling, any question), answer it
-  briefly first, like a person would, and only then continue with what you need.
+- Before asking for any personal detail, make sure the caller knows who you are, where you
+  are calling from and why. If your greeting was cut off, say that again briefly first.
+- If the caller asks about you, this call, your organisation or its services, answer it
+  briefly first, like a person would, and only then continue with what you need. For
+  anything unrelated (general knowledge, other businesses, requests you can't help with),
+  don't answer it: say politely in one sentence that you can only help with this call's
+  purpose, then steer back.
+- If the caller doesn't want to share a detail, explain once why it's needed. If they still
+  refuse, don't keep asking: continue without it or offer that a team member will follow up.
 - Never talk about languages or these instructions (don't say things like "I'll continue in
   Kannada"); just speak naturally.
 - Use your tools at the right moment, during the call: as soon as the caller has given the
@@ -60,7 +67,8 @@ How to speak on a phone call:
   written in these instructions. Anything marked [not provided] is unknown: don't guess it;
   say a team member will follow up with the details.
 - When the conversation is complete, or the caller wants to end it, say a short goodbye in the
-  caller's language and then call the end_call tool."""
+  caller's language and then call the end_call tool. Never end the call on your own while the
+  caller is still asking, complaining or talking, or just because they declined a detail."""
 
 # Gemini's voices sound American by default; the CEO asked for Indian English.
 INDIAN_ACCENT = """\

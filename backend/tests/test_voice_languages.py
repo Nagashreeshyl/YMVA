@@ -1,3 +1,6 @@
+import asyncio
+from typing import Any
+
 import pytest
 from pipecat.frames.frames import (
     LLMMessagesAppendFrame,
@@ -285,3 +288,26 @@ async def test_preferred_language_opens_then_the_caller_is_followed() -> None:
     text = system_instruction(config, {"preferred_language": "kn"}, "kn", "Asia/Kolkata")
     assert "Start in Kannada" in text and "call-screening assistant" in text
     assert "answer it" in text  # a caller's question is answered first
+
+
+async def test_slow_gemini_connect_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A handshake that hangs (once took 13.5 s on a real call) is dropped and tried again."""
+    from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
+
+    from ymva.voice import gemini_live
+
+    config = interest_reminder().model_copy(update={"mode": "gemini_live"})
+    pipeline, _, _, _, _ = _session(config)._build()  # type: ignore[attr-defined]
+    llm = next(p for p in pipeline.processors if isinstance(p, gemini_live.ResilientGeminiLive))
+    attempts: list[int] = []
+
+    async def connect(self: Any, cfg: Any) -> None:
+        attempts.append(1)
+        if len(attempts) == 1:
+            await asyncio.sleep(60)  # stuck handshake
+        self._ready.set()  # what _handle_session_ready does once connected
+
+    monkeypatch.setattr(GeminiLiveLLMService, "_connection_task_handler", connect)
+    monkeypatch.setattr(gemini_live, "CONNECT_TIMEOUT_SECS", 0.05)
+    await asyncio.wait_for(llm._connect_in_time(None), timeout=2)
+    assert len(attempts) == 2 and llm._ready.is_set()

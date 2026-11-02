@@ -1,5 +1,7 @@
 """Gemini Live service that keeps a call going when Google drops the connection or stalls."""
 
+import asyncio
+import contextlib
 from collections.abc import Callable
 from typing import Any
 
@@ -14,6 +16,12 @@ REPEAT_NOTE = (
     "[The line was unclear for a moment and you didn't catch what the caller just said. "
     "Politely ask them to say it again, briefly, in the language of the conversation.]"
 )
+
+
+# Gemini Live normally connects in about a second; once it took 13.5 s and the caller heard
+# silence. A fresh attempt is usually quick, so a slow one is abandoned after this long.
+CONNECT_TIMEOUT_SECS = 4.0
+CONNECT_ATTEMPTS = 3
 
 
 class ResilientGeminiLive(GeminiLiveLLMService):
@@ -31,6 +39,7 @@ class ResilientGeminiLive(GeminiLiveLLMService):
         # Tool calls Gemini dropped (the caller spoke over them). Answering one anyway left
         # Gemini silent for the rest of the call, so their results are not sent.
         self._cancelled_calls: set[str] = set()
+        self._ready = asyncio.Event()
 
     async def _reconnect(self) -> None:
         if self._note_after_reconnect is None and self._was_replying():
@@ -49,10 +58,38 @@ class ResilientGeminiLive(GeminiLiveLLMService):
         # Pipecat only handles errors after connecting; a refused connect (quota exceeded,
         # bad key) would vanish into the log. Reported, it shows on the call and in alerts.
         try:
-            await super()._connection_task_handler(config)
+            await self._connect_in_time(config)
         except Exception as exc:
             if not self._disconnecting:
                 await self.push_error(error_msg=f"Gemini Live couldn't connect: {exc}")
+
+    async def _connect_in_time(self, config: Any) -> None:
+        """Run the connection, starting it again if the handshake is slow."""
+        for attempt in range(1, CONNECT_ATTEMPTS + 1):
+            self._ready.clear()
+            session = asyncio.create_task(super()._connection_task_handler(config))
+            if attempt == CONNECT_ATTEMPTS:
+                await session
+                return
+            ready = asyncio.create_task(self._ready.wait())
+            try:
+                await asyncio.wait(
+                    {session, ready},
+                    timeout=CONNECT_TIMEOUT_SECS,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            except asyncio.CancelledError:  # the call ended while connecting
+                session.cancel()
+                ready.cancel()
+                raise
+            ready.cancel()
+            if self._ready.is_set() or session.done():
+                await session  # connected: runs for the rest of the call (or raises)
+                return
+            logger.warning(f"{self}: Gemini Live slow to connect (attempt {attempt}); retrying")
+            session.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await session
 
     async def _handle_server_message(self, message: Any) -> None:
         cancellation = getattr(message, "tool_call_cancellation", None)
@@ -70,6 +107,7 @@ class ResilientGeminiLive(GeminiLiveLLMService):
         await super()._tool_result(tool_call_id, tool_name, tool_result_message)
 
     async def _handle_session_ready(self, session: Any) -> None:
+        self._ready.set()
         await super()._handle_session_ready(session)
         note, self._note_after_reconnect = self._note_after_reconnect, None
         if note is None:
