@@ -8,7 +8,7 @@ import pytest
 from tests.test_calls_api import _no_network, _setup  # noqa: F401  (fixture used below)
 from ymva.api.routes import calls as calls_routes
 from ymva.db import get_sessionmaker
-from ymva.models import Call, CallStatus
+from ymva.models import Call, CallStatus, PhoneNumber, ProviderAccount, TelephonyProvider
 from ymva.services import callback
 
 
@@ -33,7 +33,19 @@ async def test_app_starts_a_call_with_a_caller_key(
     assert me.status_code == 200 and me.json()["role"] == "caller", me.text
     agents = (await app.get("/api/agents")).json()
     assert [a["id"] for a in agents] == [setup["agent"]["id"]]
-    # No from number: the only active one is used.
+    # A leftover simulator number must not make the choice ambiguous.
+    async with get_sessionmaker()() as db:
+        sim = ProviderAccount(
+            provider=TelephonyProvider.SIMULATOR,
+            name="Simulator",
+            encrypted_credentials="x",
+            webhook_secret="s",
+        )
+        db.add(sim)
+        await db.flush()
+        db.add(PhoneNumber(provider_account_id=sim.id, e164="+918036446890", label="Simulator"))
+        await db.commit()
+    # No from number: the only real active one is used.
     started = await app.post(
         "/api/calls/outbound",
         json={

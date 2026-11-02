@@ -36,6 +36,7 @@ from ymva.models import (
     CallStatus,
     PhoneNumber,
     ProviderAccount,
+    TelephonyProvider,
     User,
 )
 from ymva.permissions import Perm, can
@@ -139,7 +140,14 @@ async def _from_number(
 ) -> PhoneNumber | None:
     if number_id is not None:
         return await db.get(PhoneNumber, number_id)
-    active = list(await db.scalars(select(PhoneNumber).where(PhoneNumber.is_active)))
+    # Simulator test numbers can't reach real phones, so they're never the default.
+    active = list(
+        await db.scalars(
+            select(PhoneNumber)
+            .join(ProviderAccount)
+            .where(PhoneNumber.is_active, ProviderAccount.provider != TelephonyProvider.SIMULATOR)
+        )
+    )
     own = [n for n in active if n.inbound_agent_id == agent_id]
     if len(own) == 1 or len(active) == 1:
         return (own or active)[0]
