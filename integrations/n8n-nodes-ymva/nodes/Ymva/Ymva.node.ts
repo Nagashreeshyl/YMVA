@@ -7,10 +7,16 @@ import type {
   INodePropertyOptions,
   INodeType,
   INodeTypeDescription,
+  ResourceMapperFields,
 } from 'n8n-workflow';
-import { NodeApiError } from 'n8n-workflow';
+import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
 type Ctx = IExecuteFunctions | ILoadOptionsFunctions;
+
+const humanize = (name: string) => {
+  const s = name.replace(/_/g, ' ');
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
 
 async function ymva(
   ctx: Ctx,
@@ -64,9 +70,21 @@ export class Ymva implements INodeType {
         type: 'options',
         noDataExpression: true,
         options: [
-          { name: 'Start Call', value: 'startCall', action: 'Start a phone call with an agent' },
-          { name: 'Get Call', value: 'getCall', action: 'Get a call status and result' },
-          { name: 'List Agents', value: 'listAgents', action: 'List the agents' },
+          {
+            name: 'Start Call',
+            value: 'startCall',
+            action: 'Start a phone call with an agent',
+          },
+          {
+            name: 'Get Call',
+            value: 'getCall',
+            action: 'Get a call status and result',
+          },
+          {
+            name: 'List Agents',
+            value: 'listAgents',
+            action: 'List the agents',
+          },
         ],
         default: 'startCall',
       },
@@ -93,24 +111,28 @@ export class Ymva implements INodeType {
       },
       {
         displayName: 'Customer Details',
-        name: 'variables',
-        type: 'fixedCollection',
-        typeOptions: { multipleValues: true },
-        placeholder: 'Add Detail',
-        default: {},
+        name: 'details',
+        type: 'resourceMapper',
+        noDataExpression: true,
+        default: { mappingMode: 'defineBelow', value: null },
+        required: true,
         description:
-          "Values the agent uses in the call, e.g. customer_name. Names match the agent's {{variables}}.",
+          "The details this agent needs for the call (its {{variables}}), e.g. the customer's name",
         displayOptions: { show: { operation: ['startCall'] } },
-        options: [
-          {
-            name: 'detail',
-            displayName: 'Detail',
-            values: [
-              { displayName: 'Name', name: 'name', type: 'string', default: '' },
-              { displayName: 'Value', name: 'value', type: 'string', default: '' },
-            ],
+        typeOptions: {
+          loadOptionsDependsOn: ['agentId'],
+          resourceMapper: {
+            resourceMapperMethod: 'getAgentDetails',
+            mode: 'add',
+            valuesLabel: 'Customer Details',
+            fieldWords: { singular: 'detail', plural: 'details' },
+            addAllFields: true,
+            multiKeyMatch: false,
+            supportAutoMap: false,
+            noFieldsError: 'This agent needs no customer details',
+            refreshStaleSchemaOnOpen: true,
           },
-        ],
+        },
       },
       {
         displayName: 'Additional Fields',
@@ -187,7 +209,10 @@ export class Ymva implements INodeType {
         const agents = (await ymva(this, 'GET', '/agents')) as IDataObject[];
         return agents
           .filter((a) => a.status !== 'archived')
-          .map((a) => ({ name: `${a.name} (${a.status})`, value: a.id as string }));
+          .map((a) => ({
+            name: `${a.name} (${a.status})`,
+            value: a.id as string,
+          }));
       },
       async getNumbers(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const numbers = (await ymva(this, 'GET', '/numbers')) as IDataObject[];
@@ -199,22 +224,63 @@ export class Ymva implements INodeType {
           }));
       },
     },
+    resourceMapping: {
+      async getAgentDetails(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
+        const agentId = this.getCurrentNodeParameter('agentId');
+        const agents = (await ymva(this, 'GET', '/agents')) as IDataObject[];
+        const agent = agents.find((a) => a.id === agentId);
+        const details = (agent?.details ?? []) as IDataObject[];
+        return {
+          fields: details.map((d) => ({
+            id: d.name as string,
+            displayName: humanize(d.name as string),
+            required: true,
+            defaultMatch: false,
+            canBeUsedToMatch: false,
+            display: true,
+            type: 'string',
+          })),
+          emptyFieldsNotice: agent
+            ? 'This agent needs no customer details'
+            : 'Choose an agent first',
+        };
+      },
+    },
   };
 
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
     const out: INodeExecutionData[] = [];
+    let agents: IDataObject[] | undefined; // fetched once, to check required details
     for (let i = 0; i < this.getInputData().length; i++) {
       try {
         const operation = this.getNodeParameter('operation', i) as string;
         let result: IDataObject | IDataObject[];
         if (operation === 'startCall') {
-          const details = this.getNodeParameter('variables.detail', i, []) as IDataObject[];
+          const details = (this.getNodeParameter('details.value', i, {}) ?? {}) as IDataObject;
           const additional = this.getNodeParameter('additional', i, {}) as IDataObject;
+          const agentId = this.getNodeParameter('agentId', i);
+          agents ??= (await ymva(this, 'GET', '/agents')) as IDataObject[];
+          const needed = (
+            (agents.find((a) => a.id === agentId)?.details ?? []) as IDataObject[]
+          ).map((d) => d.name as string);
+          const missing = [...new Set([...needed, ...Object.keys(details)])].filter(
+            (name) => String(details[name] ?? '').trim() === '',
+          );
+          if (missing.length) {
+            // Otherwise the agent would call without them ("Hello, unknown customer").
+            throw new NodeOperationError(
+              this.getNode(),
+              `Fill in the customer details: ${missing.join(', ')}`,
+              {
+                itemIndex: i,
+              },
+            );
+          }
           const body: IDataObject = {
-            agent_id: this.getNodeParameter('agentId', i),
+            agent_id: agentId,
             to: this.getNodeParameter('to', i),
             variables: Object.fromEntries(
-              details.filter((d) => d.name).map((d) => [d.name, String(d.value ?? '')]),
+              Object.entries(details).map(([name, value]) => [name, String(value).trim()]),
             ),
           };
           const variables = body.variables as IDataObject;
@@ -233,7 +299,10 @@ export class Ymva implements INodeType {
         }
       } catch (error) {
         if (this.continueOnFail()) {
-          out.push({ json: { error: (error as Error).message }, pairedItem: { item: i } });
+          out.push({
+            json: { error: (error as Error).message },
+            pairedItem: { item: i },
+          });
           continue;
         }
         throw error;

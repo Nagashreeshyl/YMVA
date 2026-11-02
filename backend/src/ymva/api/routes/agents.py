@@ -19,6 +19,8 @@ from ymva.voice.config import (
     LLM_MODELS,
     SARVAM_VOICES,
     AgentConfig,
+    Variable,
+    detected_variables,
 )
 from ymva.voice.languages import LANGUAGES
 from ymva.voice.templates import TEMPLATES, VOICE_PREVIEW_LINES
@@ -46,6 +48,8 @@ class AgentSummary(BaseModel):
     published_version: int | None
     has_unpublished_changes: bool
     updated_at: datetime
+    # Per-call details an app starting a call must send (the agent's {{variables}}).
+    details: list[Variable] = []
 
 
 class AgentDetail(AgentSummary):
@@ -96,6 +100,20 @@ async def _versions(db: DbSession, agent_id: uuid.UUID) -> list[AgentVersion]:
     )
 
 
+# Filled in by YMVA itself (or picked as State/Language), so apps needn't send them.
+AUTOMATIC_DETAILS = {"call_date", "call_time", "customer_phone", "preferred_language", "state"}
+
+
+def _call_details(config: dict[str, Any]) -> list[Variable]:
+    parsed = AgentConfig.model_validate(config)
+    described = {v.name: v for v in parsed.variables}
+    return [
+        described.get(name, Variable(name=name))
+        for name in dict.fromkeys([*detected_variables(parsed), *described])
+        if name not in AUTOMATIC_DETAILS
+    ]
+
+
 def _summary(agent: Agent, latest: AgentVersion, published: AgentVersion | None) -> dict[str, Any]:
     return {
         "id": agent.id,
@@ -110,6 +128,8 @@ def _summary(agent: Agent, latest: AgentVersion, published: AgentVersion | None)
         or published.id != latest.id
         or _draft_differs(agent, latest),
         "updated_at": max(agent.updated_at, latest.created_at),
+        # Calls from apps use the published version.
+        "details": _call_details((published or latest).config),
     }
 
 

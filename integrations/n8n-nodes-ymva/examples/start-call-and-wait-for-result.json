@@ -25,10 +25,9 @@
         "operation": "startCall",
         "agentId": "",
         "to": "={{ $json.body.phone }}",
-        "variables": {
-          "detail": [
-            { "name": "customer_name", "value": "={{ $json.body.name }}" }
-          ]
+        "details": {
+          "mappingMode": "defineBelow",
+          "value": { "customer_name": "={{ $json.body.name }}" }
         },
         "additional": {
           "state": "={{ $json.body.state }}",

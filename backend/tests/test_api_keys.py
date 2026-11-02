@@ -33,6 +33,14 @@ async def test_app_starts_a_call_with_a_caller_key(
     assert me.status_code == 200 and me.json()["role"] == "caller", me.text
     agents = (await app.get("/api/agents")).json()
     assert [a["id"] for a in agents] == [setup["agent"]["id"]]
+    # What n8n shows as required fields: the agent's details, not the ones YMVA fills itself.
+    details = agents[0]["details"]
+    assert [d["name"] for d in details] == ["customer_name", "loan_id", "due_amount", "due_date"]
+    assert details[0] == {
+        "name": "customer_name",
+        "description": "Customer's name",
+        "example": "Ramesh",
+    }
     # A leftover simulator number must not make the choice ambiguous.
     async with get_sessionmaker()() as db:
         sim = ProviderAccount(

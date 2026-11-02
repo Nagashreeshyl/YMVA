@@ -63,6 +63,15 @@ curl -X POST https://<your-n8n>/webhook/ymva-call -H "Content-Type: application/
 
 The workflow starts the call, waits (up to 30 minutes) and continues with the result.
 
+### Customer details
+
+When you choose the agent, **Customer Details** lists every detail that agent needs (its
+`{{variables}}`, e.g. Customer name, Due amount), and each one is required: n8n won't run
+the node until they're all filled, so a call never starts as "unknown customer". Type a
+value or drag one in from an earlier node (e.g. `{{ $json.name }}`). If you change an
+agent's variables in YMVA, reopen the node to see the new list. Date, time, the
+customer's phone, State and Language are filled in by YMVA and aren't listed.
+
 ### Getting the result back
 
 ### Language: State or Language
