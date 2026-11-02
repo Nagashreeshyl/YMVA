@@ -100,7 +100,8 @@ def transfer_schema(when: str) -> FunctionSchema:
     return FunctionSchema(
         name="transfer_call",
         description=(
-            f"Connect the caller to a human colleague by phone. Use it when: {when}. First "
+            f"Connect the caller to a human colleague by phone. Use it only when the caller "
+            f"asks to speak to a person (never offer it yourself), and when: {when}. First "
             "tell the caller in one short sentence that you are connecting them to a "
             "colleague, then call this. If it fails, say a colleague will call them back soon."
         ),

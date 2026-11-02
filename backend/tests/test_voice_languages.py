@@ -12,7 +12,7 @@ from pipecat.tests.utils import run_test
 from pipecat.transcriptions.language import Language
 from pydantic import ValidationError
 
-from ymva.voice.config import AgentConfig, render
+from ymva.voice.config import AgentConfig, Transfer, render
 from ymva.voice.guard import LanguageGuard
 from ymva.voice.languages import code_from_pipecat, detect_language, language_for_state
 from ymva.voice.prompts import opening_language, opening_lines, system_instruction
@@ -366,3 +366,45 @@ def test_amounts_come_with_their_words() -> None:
     assert "- due_amount: 90000 (ninety thousand)" in text
     assert "- loan_amount: 1,00,000 (one lakh)" in text
     assert "- loan_id: 0042\n" in text  # ids with leading zeros aren't amounts
+
+
+def test_short_replies_are_rewritten_in_the_calls_script() -> None:
+    from ymva.voice.languages import to_script
+
+    assert to_script("ಇಲ್ಲ ಇಲ್ಲ.", "ta") == "இல்ல இல்ல."  # Kannada letters, Tamil word
+    assert to_script("ok ಇಲ್ಲ", "ta") == "ok இல்ல"  # English words stay
+    assert to_script("ಹೌದು", "ta") is None  # Tamil has no letter for ದ: left as it was
+    assert to_script("ಇಲ್ಲ", "en") is None
+
+
+async def test_guard_keeps_a_misscripted_short_reply_in_the_calls_language() -> None:
+    switches: list[tuple[str | None, str]] = []
+
+    async def on_switch(previous: str | None, current: str) -> None:
+        switches.append((previous, current))
+
+    guard = LanguageGuard(
+        allowed=["en", "kn", "ta"], initial="ta", on_switch=on_switch, gemini_live=object()
+    )
+    down, _ = await run_test(
+        guard,
+        frames_to_send=[
+            TranscriptionFrame("ಇಲ್ಲ ಇಲ್ಲ.", "user", "t1", language=Language.KN_IN),
+            TranscriptionFrame("ನಾನು ನಾಳೆ ಪಾವತಿ ಮಾಡ್ತೀನಿ", "user", "t2", language=Language.KN_IN),
+        ],
+        expected_down_frames=[TranscriptionFrame, TranscriptionFrame],
+    )
+    assert down[0].text == "இல்ல இல்ல."  # a short "no no" isn't a language change
+    assert down[1].text == "ನಾನು ನಾಳೆ ಪಾವತಿ ಮಾಡ್ತೀನಿ"  # a real Kannada sentence switches
+    assert switches == [("ta", "kn")]
+
+
+def test_agents_never_offer_a_transfer_themselves() -> None:
+    agent = interest_reminder()
+    text = system_instruction(agent, {"customer_name": "R"}, "en", "Asia/Kolkata")
+    assert "You cannot transfer or connect this call" in text and "no option to connect" in text
+    assert "Never read out phone numbers" in text
+    agent.transfer = Transfer(enabled=True, phone="+919845011111")
+    text = system_instruction(agent, {"customer_name": "R"}, "en", "Asia/Kolkata")
+    assert "Never offer on your own to connect the caller" in text
+    assert "You cannot transfer" not in text

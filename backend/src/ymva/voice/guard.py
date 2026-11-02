@@ -20,7 +20,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.sarvam.tts import SarvamTTSService
 
-from ymva.voice.languages import LANGUAGES, code_from_pipecat, detect_language
+from ymva.voice.languages import LANGUAGES, code_from_pipecat, detect_language, to_script
 
 SwitchCallback = Callable[[str | None, str], Awaitable[None]]
 
@@ -80,11 +80,26 @@ class LanguageGuard(FrameProcessor):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
-        if self._auto and isinstance(frame, TranscriptionFrame) and frame.text.strip():
-            code = self._language_of(frame)
+        if isinstance(frame, TranscriptionFrame) and frame.text.strip():
+            code = self._language_of(frame) if self._auto else None
             if code and code != self.current:
                 await self.switch_to(code)
+            else:
+                self._keep_script(frame)
         await self.push_frame(frame, direction)
+
+    def _keep_script(self, frame: TranscriptionFrame) -> None:
+        """A reply that isn't a language change but came back in another Indic script ("ಇಲ್ಲ
+        ಇಲ್ಲ" in a Tamil call) is rewritten in the call's script, so the model doesn't answer
+        in the wrong language (a real call jumped to Kannada this way)."""
+        seen = detect_language(frame.text)
+        if seen in (None, "en", self.current) or self.current == "en":
+            return
+        if {seen, self.current} == {"hi", "mr"}:  # same script
+            return
+        fixed = to_script(frame.text, self.current)
+        if fixed is not None:
+            frame.text = fixed
 
     async def switch_to(self, code: str, *, steer: bool = True) -> None:
         """Make `code` the call's language. `steer=False` when the model itself asked for it."""

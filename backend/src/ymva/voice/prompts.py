@@ -67,6 +67,10 @@ How to speak on a phone call:
   for its result, then tell the caller briefly it's done. Leave out a detail you don't know;
   never fill one with a placeholder like "not provided". If a tool fails, say a colleague
   will follow up; never claim something was saved when it wasn't.
+- Never read out phone numbers, email addresses or other internal details written in these
+  instructions (like a manager's number).
+- Never offer to send the caller a message, SMS, email or link: you can't, unless one of your
+  tools does exactly that.
 - If an automated call-screening assistant answers (it asks for your name and the reason for
   calling), say in one sentence who you are, your organisation and why you are calling, then
   wait quietly for the person to come on the line.
@@ -175,6 +179,24 @@ def _language_rules(config: AgentConfig, variables: dict[str, str], opening: str
   then on, even if they mix in others, until they ask for a different one."""
 
 
+def _transfer_rule(config: AgentConfig) -> str:
+    """Placed first: an agent's own instructions often say "transfer to the manager", and the
+    model followed those over a rule further down, offering transfers it couldn't make."""
+    can = config.transfer.enabled and (
+        config.transfer.number is not None or config.transfer.to == "branch_manager"
+    )
+    if can:
+        return """Connecting the caller to a person:
+- Never offer on your own to connect the caller to a manager or anyone else, even if the
+  instructions below mention it. Only when the caller asks to speak to a person, use the
+  transfer_call tool."""
+    return """Connecting the caller to a person:
+- You cannot transfer or connect this call to anyone: ignore anything below about
+  connecting or transferring the caller, and never offer it. If the caller asks to speak to
+  a person or a manager, say politely that there's no option to connect them to someone on
+  this call, then keep helping them yourself."""
+
+
 def system_instruction(
     config: AgentConfig, variables: dict[str, str], opening: str, timezone: str
 ) -> str:
@@ -184,6 +206,8 @@ def system_instruction(
     # (answered Telugu in English; greeted in an American accent).
     accent = INDIAN_ACCENT + "\n\n" if config.mode == "gemini_live" else ""
     return f"""{accent}{_language_rules(config, variables, opening)}
+
+{_transfer_rule(config)}
 
 {render(config.system_prompt, variables, missing="[not provided]").strip()}
 

@@ -1,5 +1,6 @@
 """Languages YMVA agents speak, and fast detection of the language of a caller's turn."""
 
+import unicodedata
 from dataclasses import dataclass
 
 from pipecat.transcriptions.language import Language
@@ -92,6 +93,31 @@ def code_from_pipecat(language: Language | str | None) -> str | None:
 
 def has_indic_letters(text: str) -> bool:
     return any(start <= ord(ch) <= end for ch in text for start, end, _ in _SCRIPT_RANGES)
+
+
+def to_script(text: str, language: str) -> str | None:
+    """Rewrite Indic letters in `language`'s script, or None if that isn't cleanly possible.
+
+    Speech recognition sometimes writes a short Tamil reply in Kannada letters ("ಇಲ್ಲ" for
+    "இல்ல"). The Indic Unicode blocks share one layout, so the same sound sits at the same
+    offset in each; a letter the target script doesn't have makes the whole rewrite fail."""
+    target = next((start for start, _, code in _SCRIPT_RANGES if code == language), None)
+    if target is None and language == "mr":
+        target = 0x0900  # Marathi is written in Devanagari
+    if target is None:
+        return None
+    out = []
+    for ch in text:
+        cp = ord(ch)
+        block = next((start for start, end, _ in _SCRIPT_RANGES if start <= cp <= end), None)
+        if block is None or block == target:
+            out.append(ch)
+            continue
+        moved = chr(target + cp - block)
+        if unicodedata.name(moved, None) is None:
+            return None
+        out.append(moved)
+    return "".join(out)
 
 
 def detect_language(text: str, allowed: list[str] | None = None) -> str | None:
