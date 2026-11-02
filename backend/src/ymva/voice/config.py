@@ -265,5 +265,19 @@ def detected_variables(config: "AgentConfig") -> list[str]:
     return list(seen)
 
 
+# Filled in by YMVA itself (or picked as State/Language), so apps needn't send them.
+AUTOMATIC_DETAILS = {"call_date", "call_time", "customer_phone", "preferred_language", "state"}
+
+
+def call_details(config: "AgentConfig") -> list[Variable]:
+    """Per-call details an app starting a call must send: used or declared, minus automatic."""
+    described = {v.name: v for v in config.variables}
+    return [
+        described.get(name, Variable(name=name))
+        for name in dict.fromkeys([*detected_variables(config), *described])
+        if name not in AUTOMATIC_DETAILS
+    ]
+
+
 def missing_variables(template: str, variables: dict[str, str]) -> set[str]:
     return {m.group(1) for m in VARIABLE_RE.finditer(template) if not variables.get(m.group(1))}

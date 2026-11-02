@@ -17,29 +17,18 @@ The key is shown once. Paste it into n8n's credential, nowhere else.
 
 ## 2. Install the node in your n8n (Hostinger VPS)
 
-You need the package file `n8n-nodes-ymva-1.0.0.tgz` (build it with
-`npm install && npm pack` in this folder).
+YMVA serves the latest node itself at `https://<YMVA address>/downloads/n8n-nodes-ymva.tgz`,
+so n8n can install it straight from there. Log in to the n8n server (`ssh root@<VPS IP>`
+or hPanel → VPS → Browser terminal) and run this one line, with your YMVA address and your
+n8n container's name (`docker ps` shows it; on our Hostinger VPS it is `n8n-pio0-n8n-1`):
 
-1. **Upload it to the VPS.** From your Mac:
-   ```bash
-   scp n8n-nodes-ymva-1.0.0.tgz root@<VPS IP>:/root/
-   ```
-   (Or use the Hostinger panel's file manager / browser terminal.)
-2. **Log in to the VPS** (`ssh root@<VPS IP>` or hPanel → VPS → Browser terminal) and find
-   the n8n container's name:
-   ```bash
-   docker ps --format '{{.Names}}  {{.Image}}' | grep -i n8n
-   ```
-3. **Install it into n8n's data folder** (replace `n8n` with the name from step 2):
-   ```bash
-   docker cp /root/n8n-nodes-ymva-1.0.0.tgz n8n:/tmp/
-   docker exec -u node n8n sh -c 'mkdir -p ~/.n8n/nodes && cd ~/.n8n/nodes && npm install --legacy-peer-deps /tmp/n8n-nodes-ymva-1.0.0.tgz'
-   docker restart n8n
-   ```
-4. Open n8n, add a node and search **YMVA**.
+```bash
+docker exec -u node n8n-pio0-n8n-1 sh -c 'mkdir -p ~/.n8n/nodes && cd ~/.n8n/nodes && npm install --legacy-peer-deps https://YMVA/downloads/n8n-nodes-ymva.tgz' && docker restart n8n-pio0-n8n-1
+```
 
-`~/.n8n/nodes` is on n8n's data volume, so the node survives restarts and n8n updates.
-To update the node later, repeat steps 1–3 with the new file. Tested with n8n 2.43.
+Then open n8n, add a node and search **YMVA**. To update the node later, run the same line
+again. `~/.n8n/nodes` is on n8n's data volume, so the node survives restarts and n8n
+updates. Tested with n8n 2.43.
 
 ## 3. Add the credential
 
@@ -77,8 +66,9 @@ customer's phone, State and Language are filled in by YMVA and aren't listed.
 ### Language: State or Language
 
 In **Additional Fields**, pick the customer's **State** from the dropdown (every state and
-union territory, with the language it opens in), or switch it to *Expression* to map it
-from earlier data (e.g. `{{ $json.state }}`). The call opens in that state's language: Karnataka/KA → Kannada, Tamil Nadu/TN → Tamil, Andhra
+union territory, with the language it opens in). To take it from an earlier node instead
+(e.g. a Google Sheets row), hover the field, click **Expression** and drag the state
+column in, or type `{{ $json.state }}`. The call opens in that state's language: Karnataka/KA → Kannada, Tamil Nadu/TN → Tamil, Andhra
 Pradesh/Telangana → Telugu, Kerala → Malayalam, Maharashtra → Marathi, UP, Bihar, MP,
 Rajasthan, Delhi… → Hindi, and so on. Full names, short codes and loose spellings all work.
 **Language** picks it directly and wins over State. The agent must have that language
@@ -114,6 +104,8 @@ outcome). If the callback can't be delivered YMVA retries three times.
 also be its real address: set `WEBHOOK_URL` in n8n's environment.
 
 ## Without n8n: the plain API
+
+The full guide for other applications is `docs/INTEGRATION-GUIDE.md` in the YMVA repository.
 
 Any app can do the same with the key in an `Authorization: Bearer` header:
 

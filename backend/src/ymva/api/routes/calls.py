@@ -20,6 +20,7 @@ from ymva.api.deps import (
     RecordingListener,
     _user_from_session,
     client_ip,
+    is_api_key_header,
 )
 from ymva.api.routes.numbers import normalise_e164
 from ymva.api.schemas import Page
@@ -52,6 +53,7 @@ from ymva.services.integrations import telephony_client
 from ymva.services.outbound import start_outbound_call
 from ymva.telephony import TelephonyError
 from ymva.voice.browser import BROWSER_OUTPUT_SAMPLE_RATE, BrowserAudioSerializer
+from ymva.voice.config import AgentConfig, call_details
 from ymva.voice.recording import recording_path
 from ymva.voice.runtime import fail_call, load_setup, run_on_websocket
 from ymva.voice.session import MissingCredentialError
@@ -288,6 +290,19 @@ async def place_outbound(
             await check_destination(callback_url)
         except httpx.HTTPError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"callback_url: {exc}") from exc
+    # Apps must send every detail the agent uses, or it calls an "unknown customer". (The
+    # dashboard's own call form may leave them blank for quick tests.)
+    if is_api_key_header(request.headers.get("authorization", "")) and agent.published_version_id:
+        version = await db.get(AgentVersion, agent.published_version_id)
+        config = AgentConfig.model_validate(version.config if version else {})
+        missing = [
+            d.name for d in call_details(config) if not str(body.variables.get(d.name, "")).strip()
+        ]
+        if missing:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Missing customer details: {', '.join(missing)} (see details in GET /api/agents)",
+            )
     try:
         call = await start_outbound_call(
             db,

@@ -53,16 +53,19 @@ async def test_app_starts_a_call_with_a_caller_key(
         await db.flush()
         db.add(PhoneNumber(provider_account_id=sim.id, e164="+918036446890", label="Simulator"))
         await db.commit()
+    call = {
+        "agent_id": setup["agent"]["id"],
+        "to": "98450 11111",
+        "variables": {"customer_name": "Ramesh", "due_amount": " "},
+        "callback_url": "https://hooks.example.com/ymva",
+    }
+    # An app must send every detail the agent uses.
+    refused = await app.post("/api/calls/outbound", json=call)
+    assert refused.status_code == 400
+    assert "loan_id, due_amount, due_date" in refused.json()["detail"]
+    call["variables"] |= {"loan_id": "YM-1", "due_amount": "2,450", "due_date": "30 November"}
     # No from number: the only real active one is used.
-    started = await app.post(
-        "/api/calls/outbound",
-        json={
-            "agent_id": setup["agent"]["id"],
-            "to": "98450 11111",
-            "variables": {"customer_name": "Ramesh"},
-            "callback_url": "https://hooks.example.com/ymva",
-        },
-    )
+    started = await app.post("/api/calls/outbound", json=call)
     assert started.status_code == 201, started.text
     call_id = started.json()["id"]
     assert (await app.get(f"/api/calls/{call_id}")).json()["status"] == "ringing"
