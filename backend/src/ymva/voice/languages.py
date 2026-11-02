@@ -31,19 +31,31 @@ LANGUAGES: dict[str, LanguageInfo] = {
 }
 
 # Default greeting language by the customer's state (editable per agent).
-STATE_LANGUAGE: dict[str, str] = {
-    "karnataka": "kn",
-    "andhra pradesh": "te",
-    "telangana": "te",
-    "tamil nadu": "ta",
-    "puducherry": "ta",
-    "kerala": "ml",
-    "maharashtra": "mr",
-    "west bengal": "bn",
-    "gujarat": "gu",
-    "punjab": "pa",
-    "odisha": "od",
-}
+_STATES: dict[str, tuple[str, ...]] = {
+    # language: state names and the short codes apps often send instead
+    "kn": ("karnataka", "ka"),
+    "te": ("andhra pradesh", "ap", "telangana", "ts", "tg"),
+    "ta": ("tamil nadu", "tamilnadu", "tn", "puducherry", "pondicherry", "py"),
+    "ml": ("kerala", "kl", "lakshadweep"),
+    "mr": ("maharashtra", "mh"),
+    "bn": ("west bengal", "wb", "tripura"),
+    "gu": ("gujarat", "gj"),
+    "pa": ("punjab", "pb"),
+    "od": ("odisha", "orissa", "od", "or"),
+    "hi": (
+        "uttar pradesh", "up", "bihar", "br", "madhya pradesh", "mp", "rajasthan", "rj",
+        "delhi", "new delhi", "dl", "haryana", "hr", "jharkhand", "jh", "chhattisgarh",
+        "cg", "uttarakhand", "uk", "himachal pradesh", "hp", "chandigarh", "ch",
+    ),
+}  # fmt: skip
+
+
+def _key(state: str) -> str:
+    """'Tamil-Nadu', 'tamil nadu ' and 'TamilNadu' all match."""
+    return "".join(ch for ch in state.lower() if ch.isalpha())
+
+
+STATE_LANGUAGE: dict[str, str] = {_key(s): code for code, names in _STATES.items() for s in names}
 
 # Unicode blocks of Indic scripts. Hindi and Marathi share Devanagari; we report Hindi
 # unless the agent only allows Marathi (see detect_language).
@@ -108,9 +120,9 @@ def detect_language(text: str, allowed: list[str] | None = None) -> str | None:
 def language_for_state(state: str | None, overrides: dict[str, str] | None = None) -> str | None:
     if not state:
         return None
-    key = state.strip().lower()
+    key = _key(state)
     if overrides:
-        lowered = {k.strip().lower(): v for k, v in overrides.items()}
+        lowered = {_key(k): v for k, v in overrides.items()}
         if key in lowered:
             return lowered[key]
     return STATE_LANGUAGE.get(key)

@@ -121,6 +121,36 @@ export class Ymva implements INodeType {
         displayOptions: { show: { operation: ['startCall'] } },
         options: [
           {
+            displayName: 'State',
+            name: 'state',
+            type: 'string',
+            default: '',
+            placeholder: 'Karnataka',
+            description:
+              "The customer's state; the call opens in its language (Karnataka → Kannada, TN → Tamil, UP → Hindi). Names or short codes. The agent must have that language turned on, otherwise it uses its default.",
+          },
+          {
+            displayName: 'Language',
+            name: 'language',
+            type: 'options',
+            default: '',
+            description: 'Open the call in this language. Wins over State.',
+            options: [
+              { name: '(From State or Agent Default)', value: '' },
+              { name: 'Bengali', value: 'bn' },
+              { name: 'English', value: 'en' },
+              { name: 'Gujarati', value: 'gu' },
+              { name: 'Hindi', value: 'hi' },
+              { name: 'Kannada', value: 'kn' },
+              { name: 'Malayalam', value: 'ml' },
+              { name: 'Marathi', value: 'mr' },
+              { name: 'Odia', value: 'od' },
+              { name: 'Punjabi', value: 'pa' },
+              { name: 'Tamil', value: 'ta' },
+              { name: 'Telugu', value: 'te' },
+            ],
+          },
+          {
             displayName: 'Call From Number Name or ID',
             name: 'fromNumberId',
             type: 'options',
@@ -187,6 +217,9 @@ export class Ymva implements INodeType {
               details.filter((d) => d.name).map((d) => [d.name, String(d.value ?? '')]),
             ),
           };
+          const variables = body.variables as IDataObject;
+          if (additional.state) variables.state = String(additional.state);
+          if (additional.language) variables.preferred_language = String(additional.language);
           if (additional.fromNumberId) body.from_number_id = additional.fromNumberId;
           if (additional.callbackUrl) body.callback_url = additional.callbackUrl;
           result = await ymva(this, 'POST', '/calls/outbound', body);

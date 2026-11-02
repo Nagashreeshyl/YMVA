@@ -49,6 +49,11 @@ def test_state_language_with_override() -> None:
     assert language_for_state(" telangana ") == "te"
     assert language_for_state("Karnataka", {"karnataka": "en"}) == "en"
     assert language_for_state("Goa") is None
+    # Short codes and loose spellings from other apps.
+    assert language_for_state("KA") == "kn" and language_for_state("TN") == "ta"
+    assert language_for_state("Tamil-Nadu") == "ta" and language_for_state("tamilnadu") == "ta"
+    assert language_for_state("Uttar Pradesh") == "hi" and language_for_state("Delhi") == "hi"
+    assert language_for_state("Orissa") == "od"
 
 
 def test_opening_language_priority() -> None:

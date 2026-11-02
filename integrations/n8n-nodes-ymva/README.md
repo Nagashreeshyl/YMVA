@@ -15,32 +15,38 @@ Settings → **API keys** → New API key. Pick the access:
 
 The key is shown once. Paste it into n8n's credential, nowhere else.
 
-## 2. Install the node in your self-hosted n8n
+## 2. Install the node in your n8n (Hostinger VPS)
 
-Build it once (Node.js 20+):
+You need the package file `n8n-nodes-ymva-1.0.0.tgz` (build it with
+`npm install && npm pack` in this folder).
 
-```bash
-cd integrations/n8n-nodes-ymva && npm install && npm run build
-```
+1. **Upload it to the VPS.** From your Mac:
+   ```bash
+   scp n8n-nodes-ymva-1.0.0.tgz root@<VPS IP>:/root/
+   ```
+   (Or use the Hostinger panel's file manager / browser terminal.)
+2. **Log in to the VPS** (`ssh root@<VPS IP>` or hPanel → VPS → Browser terminal) and find
+   the n8n container's name:
+   ```bash
+   docker ps --format '{{.Names}}  {{.Image}}' | grep -i n8n
+   ```
+3. **Install it into n8n's data folder** (replace `n8n` with the name from step 2):
+   ```bash
+   docker cp /root/n8n-nodes-ymva-1.0.0.tgz n8n:/tmp/
+   docker exec -u node n8n sh -c 'mkdir -p ~/.n8n/nodes && cd ~/.n8n/nodes && npm install --legacy-peer-deps /tmp/n8n-nodes-ymva-1.0.0.tgz'
+   docker restart n8n
+   ```
+4. Open n8n, add a node and search **YMVA**.
 
-Then copy the whole `n8n-nodes-ymva` folder (with `dist/`) into n8n's custom folder and
-restart n8n:
-
-- **n8n in Docker:** mount it, e.g. in your n8n `docker-compose.yml`:
-  ```yaml
-  volumes:
-    - ./n8n-nodes-ymva:/home/node/.n8n/custom/n8n-nodes-ymva:ro
-  ```
-- **n8n installed with npm:** copy it to `~/.n8n/custom/n8n-nodes-ymva`.
-
-"YMVA" now appears in the node list. Tested with n8n 2.43.
+`~/.n8n/nodes` is on n8n's data volume, so the node survives restarts and n8n updates.
+To update the node later, repeat steps 1–3 with the new file. Tested with n8n 2.43.
 
 ## 3. Add the credential
 
 In n8n: Credentials → New → **YMVA API**.
 
-- **YMVA Address:** YMVA's public address, e.g. `https://voice.yellowmetal.co`
-  (no `/api`). n8n must be able to reach it.
+- **YMVA Address:** YMVA's public address, e.g. `https://voice.yellowmetal.co` or the ngrok
+  address (no `/api`). Your Hostinger server must be able to reach it, so `localhost` won't work.
 - **API Key:** the key from step 1.
 
 "Test" checks the key.
@@ -58,6 +64,17 @@ curl -X POST https://<your-n8n>/webhook/ymva-call -H "Content-Type: application/
 The workflow starts the call, waits (up to 30 minutes) and continues with the result.
 
 ### Getting the result back
+
+### Language: State or Language
+
+In **Additional Fields**, set **State** (e.g. `{{ $json.state }}`) and the call opens in
+that state's language: Karnataka/KA → Kannada, Tamil Nadu/TN → Tamil, Andhra
+Pradesh/Telangana → Telugu, Kerala → Malayalam, Maharashtra → Marathi, UP, Bihar, MP,
+Rajasthan, Delhi… → Hindi, and so on. Full names, short codes and loose spellings all work.
+**Language** picks it directly and wins over State. The agent must have that language
+turned on (agent → Languages); otherwise it opens in its default language. If the
+customer answers in another language the agent follows them, unless the agent is set
+to keep one language.
 
 Set **Additional Fields → Callback URL** to `{{ $execution.resumeUrl }}` and follow the
 node with a **Wait** node set to *Resume: On Webhook Call* (POST). When the call ends
@@ -94,14 +111,15 @@ Any app can do the same with the key in an `Authorization: Bearer` header:
 |---|---|
 | List agents | `GET /api/agents` |
 | List numbers | `GET /api/numbers` |
-| Start a call | `POST /api/calls/outbound` with `agent_id`, `to`, optional `variables`, `from_number_id`, `callback_url` |
+| Start a call | `POST /api/calls/outbound` with `agent_id`, `to`, optional `variables` (incl. `state`, `preferred_language`), `from_number_id`, `callback_url` |
 | Call status and result | `GET /api/calls/{call_id}` |
 
 ```bash
 curl -X POST https://voice.yellowmetal.co/api/calls/outbound \
   -H "Authorization: Bearer ymva_…" -H "Content-Type: application/json" \
-  -d '{"agent_id":"<agent id>","to":"+919845011111","variables":{"customer_name":"Ramesh"},"callback_url":"https://your-app/webhook"}'
+  -d '{"agent_id":"<agent id>","to":"+919845011111","variables":{"customer_name":"Ramesh","state":"Karnataka"},"callback_url":"https://your-app/webhook"}'
 ```
 
-Without `from_number_id`, YMVA uses the number set to answer for that agent, or the only
+`variables.state` sets the call language as above; `variables.preferred_language`
+(`kn`, `ta`, `hi`… or `Kannada`) overrides it. Without `from_number_id`, YMVA uses the number set to answer for that agent, or the only
 active number. Errors come back as `{"detail": "…"}` with a plain explanation.

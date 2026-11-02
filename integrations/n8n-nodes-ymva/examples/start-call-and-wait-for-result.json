@@ -18,7 +18,7 @@
     {
       "id": "b1f0c6c2-0d55-4f4e-9d0a-1a2b3c4d5e02",
       "name": "Start YMVA call",
-      "type": "CUSTOM.ymva",
+      "type": "n8n-nodes-ymva.ymva",
       "typeVersion": 1,
       "position": [240, 0],
       "parameters": {
@@ -31,6 +31,7 @@
           ]
         },
         "additional": {
+          "state": "={{ $json.body.state }}",
           "callbackUrl": "={{ $execution.resumeUrl }}"
         }
       }
