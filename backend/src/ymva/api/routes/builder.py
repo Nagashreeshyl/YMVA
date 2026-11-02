@@ -384,8 +384,10 @@ async def assistant_turn(
             db, result.remove_tools, updated or AgentConfig.model_validate(before)
         )
         tool_changes += removed
-    if result.test_tool is not None:
-        tool_notes.append(await _test_tool(db, admin, request, result.test_tool))
+    if (test := result.test_tool) is not None:
+        # Only what really happened: the model's own words sometimes claimed it was sent.
+        result = result.model_copy(update={"reply": ""})
+        tool_notes.append(await _test_tool(db, admin, request, test))
 
     asked = AgentAssistantMessage(
         agent_id=agent.id, role="user", content=body.message, created_by_id=admin.id
@@ -396,7 +398,7 @@ async def assistant_turn(
     answer = AgentAssistantMessage(
         agent_id=agent.id,
         role="assistant",
-        content=" ".join([result.reply, *tool_notes]),
+        content=" ".join(part for part in [result.reply, *tool_notes] if part),
         changes=[*result.changes, *tool_changes] if after is not None else [],
         config_before=before if after is not None else None,
         config_after=after,

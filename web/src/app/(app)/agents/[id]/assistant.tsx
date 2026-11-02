@@ -51,10 +51,8 @@ export function Assistant({
         ...turn.messages,
       ]);
       if (turn.messages[1].changes.length) onChanged(turn.agent);
-      // YMA may have created or changed tools: their key fields show from the tool list.
-      if (turn.messages[1].changes.some((c) => c.startsWith("Tool "))) {
-        queryClient.invalidateQueries({ queryKey: ["tools"] });
-      }
+      // YMA may have created, changed or tested tools: key fields show from the fresh list.
+      queryClient.invalidateQueries({ queryKey: ["tools"] });
     },
   });
   const undo = useMutation({

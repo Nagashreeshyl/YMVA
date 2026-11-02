@@ -326,7 +326,8 @@ async def test_yma_removes_unfinished_tools_and_runs_tests(
     turn = (
         await c.post(f"/api/agents/{agent['id']}/assistant", json={"message": "send me a test"})
     ).json()
-    assert "can't test send_telegram_message yet" in turn["messages"][1]["content"]
+    said = turn["messages"][1]["content"]
+    assert said.startswith("I can't test send_telegram_message yet")  # no claim it was sent
 
     keyed = await c.put(
         f"/api/tools/{made['id']}/secrets",
