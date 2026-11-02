@@ -4,9 +4,10 @@ from datetime import datetime
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 from sqlalchemy import func, select
 from starlette.websockets import WebSocketDisconnect
 
@@ -45,6 +46,7 @@ from ymva.services.calls import (
     check_capacity,
     runnable_version,
 )
+from ymva.services.egress import check_destination
 from ymva.services.integrations import telephony_client
 from ymva.services.outbound import start_outbound_call
 from ymva.telephony import TelephonyError
@@ -98,11 +100,14 @@ class CallDetail(CallOut):
 
 class OutboundIn(BaseModel):
     agent_id: uuid.UUID
-    from_number_id: uuid.UUID
+    # Optional for apps: the number set to answer for this agent, or the only active number.
+    from_number_id: uuid.UUID | None = None
     to: str
     variables: dict[str, str] = Field(default_factory=dict)
     # Call with the agent's unpublished edits instead of the published version (testing).
     use_edits: bool = False
+    # The result is POSTed here when the call ends (see services/callback.py).
+    callback_url: HttpUrl | None = None
 
     _normalise = field_validator("to")(normalise_e164)
 
@@ -127,6 +132,21 @@ def _call_out(call: Call, agent_names: dict[uuid.UUID, str]) -> dict[str, Any]:
         "cost_total": float(call.cost_total) if call.cost_total is not None else None,
         "languages": call.languages or [],
     }
+
+
+async def _from_number(
+    db: DbSession, number_id: uuid.UUID | None, agent_id: uuid.UUID
+) -> PhoneNumber | None:
+    if number_id is not None:
+        return await db.get(PhoneNumber, number_id)
+    active = list(await db.scalars(select(PhoneNumber).where(PhoneNumber.is_active)))
+    own = [n for n in active if n.inbound_agent_id == agent_id]
+    if len(own) == 1 or len(active) == 1:
+        return (own or active)[0]
+    raise HTTPException(
+        status.HTTP_400_BAD_REQUEST,
+        "Choose the number to call from: pass from_number_id (see GET /api/numbers).",
+    )
 
 
 def _visible(user: User, call: Call) -> bool:
@@ -251,9 +271,15 @@ async def place_outbound(
     body: OutboundIn, request: Request, admin: CallPlacer, db: DbSession
 ) -> CallOut:
     agent = await db.get(Agent, body.agent_id)
-    number = await db.get(PhoneNumber, body.from_number_id)
+    number = await _from_number(db, body.from_number_id, body.agent_id)
     if agent is None or number is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent or number not found")
+    callback_url = str(body.callback_url) if body.callback_url else None
+    if callback_url:
+        try:
+            await check_destination(callback_url)
+        except httpx.HTTPError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"callback_url: {exc}") from exc
     try:
         call = await start_outbound_call(
             db,
@@ -264,6 +290,7 @@ async def place_outbound(
             # Only agent editors may call with unpublished edits.
             use_edits=body.use_edits and can(admin.role, Perm.AGENTS_EDIT),
             placed_by=admin,
+            callback_url=callback_url,
         )
     except CallSetupError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc

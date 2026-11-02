@@ -1,0 +1,81 @@
+{
+  "name": "YMVA: start a call and wait for its result",
+  "nodes": [
+    {
+      "id": "b1f0c6c2-0d55-4f4e-9d0a-1a2b3c4d5e01",
+      "name": "Call request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "ymva-call-request",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ymva-call",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "b1f0c6c2-0d55-4f4e-9d0a-1a2b3c4d5e02",
+      "name": "Start YMVA call",
+      "type": "CUSTOM.ymva",
+      "typeVersion": 1,
+      "position": [240, 0],
+      "parameters": {
+        "operation": "startCall",
+        "agentId": "",
+        "to": "={{ $json.body.phone }}",
+        "variables": {
+          "detail": [
+            { "name": "customer_name", "value": "={{ $json.body.name }}" }
+          ]
+        },
+        "additional": {
+          "callbackUrl": "={{ $execution.resumeUrl }}"
+        }
+      }
+    },
+    {
+      "id": "b1f0c6c2-0d55-4f4e-9d0a-1a2b3c4d5e03",
+      "name": "Wait for call result",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [480, 0],
+      "webhookId": "ymva-call-result",
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "POST",
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 30,
+        "resumeUnit": "minutes",
+        "options": {}
+      }
+    },
+    {
+      "id": "b1f0c6c2-0d55-4f4e-9d0a-1a2b3c4d5e04",
+      "name": "Call result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [720, 0],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "1", "name": "call_id", "type": "string", "value": "={{ $json.body.call_id }}" },
+            { "id": "2", "name": "status", "type": "string", "value": "={{ $json.body.status }}" },
+            { "id": "3", "name": "outcome", "type": "string", "value": "={{ $json.body.outcome }}" },
+            { "id": "4", "name": "summary", "type": "string", "value": "={{ $json.body.summary }}" },
+            { "id": "5", "name": "details", "type": "object", "value": "={{ $json.body.details }}" }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Call request": { "main": [[{ "node": "Start YMVA call", "type": "main", "index": 0 }]] },
+    "Start YMVA call": { "main": [[{ "node": "Wait for call result", "type": "main", "index": 0 }]] },
+    "Wait for call result": { "main": [[{ "node": "Call result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

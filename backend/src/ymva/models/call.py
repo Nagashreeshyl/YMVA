@@ -44,6 +44,8 @@ class Call(UUIDPk, Timestamps, Base):
     placed_by_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
+    # Where to POST the result when the call ends (set by apps that start calls by API).
+    callback_url: Mapped[str | None] = mapped_column(String(2048))
     agent_version_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("agent_versions.id", ondelete="SET NULL")
     )

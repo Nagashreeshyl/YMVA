@@ -17,6 +17,7 @@ from ymva.config import get_settings
 from ymva.db import get_sessionmaker
 from ymva.logging import get_logger
 from ymva.models import AgentVersion, Call, CallDirection, CallEvent, CallEventType, DoNotCall
+from ymva.services import callback
 from ymva.services.builder import ask_gemini
 from ymva.services.integrations import load_ai_keys
 from ymva.services.tools import call_facts, load_tools, run_tool
@@ -221,6 +222,7 @@ async def send_results(call_id: uuid.UUID) -> None:
 async def _after_call(call_id: uuid.UUID) -> None:
     await analyze_call(call_id)
     await send_results(call_id)
+    await callback.send_callback(call_id)
 
 
 def schedule(call_id: uuid.UUID) -> None:

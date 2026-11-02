@@ -235,8 +235,8 @@ export function TeamSettings({ currentUserId }: { currentUserId: string }) {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-[60ch] text-muted">
-          Admins can change everything. View-only people see calls, recordings
-          and results but can&apos;t change agents or settings.
+          Each person&apos;s role decides which pages and buttons they see. Only owners can add
+          or change owners.
         </p>
         {!adding && (
           <Button onClick={() => setAdding(true)}>

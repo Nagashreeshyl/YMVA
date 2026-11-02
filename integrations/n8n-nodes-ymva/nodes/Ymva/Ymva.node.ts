@@ -1,0 +1,211 @@
+import type {
+  IDataObject,
+  IExecuteFunctions,
+  IHttpRequestMethods,
+  ILoadOptionsFunctions,
+  INodeExecutionData,
+  INodePropertyOptions,
+  INodeType,
+  INodeTypeDescription,
+} from 'n8n-workflow';
+import { NodeApiError } from 'n8n-workflow';
+
+type Ctx = IExecuteFunctions | ILoadOptionsFunctions;
+
+async function ymva(
+  ctx: Ctx,
+  method: IHttpRequestMethods,
+  path: string,
+  body?: IDataObject,
+): Promise<any> {
+  const { baseUrl } = await ctx.getCredentials('ymvaApi');
+  const response = await ctx.helpers.httpRequestWithAuthentication.call(ctx, 'ymvaApi', {
+    method,
+    url: `${String(baseUrl).replace(/\/+$/, '')}/api${path}`,
+    body,
+    json: true,
+    returnFullResponse: true,
+    ignoreHttpStatusErrors: true,
+  });
+  if (response.statusCode >= 400) {
+    // YMVA's own explanation (e.g. "Choose the number to call from"), not n8n's generic one.
+    const detail = response.body?.detail;
+    const message =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d: IDataObject) => d.msg).join('; ')
+          : `YMVA answered ${response.statusCode}`;
+    throw new NodeApiError(ctx.getNode(), response.body ?? {}, {
+      message,
+      httpCode: String(response.statusCode),
+    });
+  }
+  return response.body;
+}
+
+export class Ymva implements INodeType {
+  description: INodeTypeDescription = {
+    displayName: 'YMVA',
+    name: 'ymva',
+    icon: 'file:ymva.svg',
+    group: ['output'],
+    version: 1,
+    subtitle: '={{$parameter["operation"]}}',
+    description: 'Start AI phone calls with a YMVA agent and get their results',
+    defaults: { name: 'YMVA' },
+    inputs: ['main'],
+    outputs: ['main'],
+    credentials: [{ name: 'ymvaApi', required: true }],
+    properties: [
+      {
+        displayName: 'Operation',
+        name: 'operation',
+        type: 'options',
+        noDataExpression: true,
+        options: [
+          { name: 'Start Call', value: 'startCall', action: 'Start a phone call with an agent' },
+          { name: 'Get Call', value: 'getCall', action: 'Get a call status and result' },
+          { name: 'List Agents', value: 'listAgents', action: 'List the agents' },
+        ],
+        default: 'startCall',
+      },
+      {
+        displayName: 'Agent Name or ID',
+        name: 'agentId',
+        type: 'options',
+        typeOptions: { loadOptionsMethod: 'getAgents' },
+        required: true,
+        default: '',
+        description:
+          'The agent that makes the call. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+        displayOptions: { show: { operation: ['startCall'] } },
+      },
+      {
+        displayName: 'Phone Number to Call',
+        name: 'to',
+        type: 'string',
+        required: true,
+        default: '',
+        placeholder: '+919845011111',
+        description: 'With country code; 10-digit Indian numbers also work',
+        displayOptions: { show: { operation: ['startCall'] } },
+      },
+      {
+        displayName: 'Customer Details',
+        name: 'variables',
+        type: 'fixedCollection',
+        typeOptions: { multipleValues: true },
+        placeholder: 'Add Detail',
+        default: {},
+        description:
+          "Values the agent uses in the call, e.g. customer_name. Names match the agent's {{variables}}.",
+        displayOptions: { show: { operation: ['startCall'] } },
+        options: [
+          {
+            name: 'detail',
+            displayName: 'Detail',
+            values: [
+              { displayName: 'Name', name: 'name', type: 'string', default: '' },
+              { displayName: 'Value', name: 'value', type: 'string', default: '' },
+            ],
+          },
+        ],
+      },
+      {
+        displayName: 'Additional Fields',
+        name: 'additional',
+        type: 'collection',
+        placeholder: 'Add Field',
+        default: {},
+        displayOptions: { show: { operation: ['startCall'] } },
+        options: [
+          {
+            displayName: 'Call From Number Name or ID',
+            name: 'fromNumberId',
+            type: 'options',
+            typeOptions: { loadOptionsMethod: 'getNumbers' },
+            default: '',
+            description:
+              'Leave empty to use the number set for this agent (or the only number). Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+          },
+          {
+            displayName: 'Callback URL',
+            name: 'callbackUrl',
+            type: 'string',
+            default: '',
+            placeholder: '={{ $execution.resumeUrl }}',
+            description:
+              'YMVA POSTs the result here when the call ends (outcome, summary, details). Use {{ $execution.resumeUrl }} with a Wait node set to "On Webhook Call".',
+          },
+        ],
+      },
+      {
+        displayName: 'Call ID',
+        name: 'callId',
+        type: 'string',
+        required: true,
+        default: '',
+        displayOptions: { show: { operation: ['getCall'] } },
+      },
+    ],
+  };
+
+  methods = {
+    loadOptions: {
+      async getAgents(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const agents = (await ymva(this, 'GET', '/agents')) as IDataObject[];
+        return agents
+          .filter((a) => a.status !== 'archived')
+          .map((a) => ({ name: `${a.name} (${a.status})`, value: a.id as string }));
+      },
+      async getNumbers(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const numbers = (await ymva(this, 'GET', '/numbers')) as IDataObject[];
+        return numbers
+          .filter((n) => n.is_active)
+          .map((n) => ({
+            name: n.label ? `${n.e164} · ${n.label}` : (n.e164 as string),
+            value: n.id as string,
+          }));
+      },
+    },
+  };
+
+  async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+    const out: INodeExecutionData[] = [];
+    for (let i = 0; i < this.getInputData().length; i++) {
+      try {
+        const operation = this.getNodeParameter('operation', i) as string;
+        let result: IDataObject | IDataObject[];
+        if (operation === 'startCall') {
+          const details = this.getNodeParameter('variables.detail', i, []) as IDataObject[];
+          const additional = this.getNodeParameter('additional', i, {}) as IDataObject;
+          const body: IDataObject = {
+            agent_id: this.getNodeParameter('agentId', i),
+            to: this.getNodeParameter('to', i),
+            variables: Object.fromEntries(
+              details.filter((d) => d.name).map((d) => [d.name, String(d.value ?? '')]),
+            ),
+          };
+          if (additional.fromNumberId) body.from_number_id = additional.fromNumberId;
+          if (additional.callbackUrl) body.callback_url = additional.callbackUrl;
+          result = await ymva(this, 'POST', '/calls/outbound', body);
+        } else if (operation === 'getCall') {
+          result = await ymva(this, 'GET', `/calls/${this.getNodeParameter('callId', i)}`);
+        } else {
+          result = await ymva(this, 'GET', '/agents');
+        }
+        for (const item of Array.isArray(result) ? result : [result]) {
+          out.push({ json: item, pairedItem: { item: i } });
+        }
+      } catch (error) {
+        if (this.continueOnFail()) {
+          out.push({ json: { error: (error as Error).message }, pairedItem: { item: i } });
+          continue;
+        }
+        throw error;
+      }
+    }
+    return [out];
+  }
+}

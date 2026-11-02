@@ -16,6 +16,7 @@ from ymva import __version__
 from ymva.api.deps import is_api_key_header
 from ymva.api.routes import (
     agents,
+    api_keys,
     audit_logs,
     auth,
     builder,
@@ -128,6 +129,7 @@ def create_app() -> FastAPI:
         health,
         auth,
         users,
+        api_keys,
         audit_logs,
         overview,
         integrations,

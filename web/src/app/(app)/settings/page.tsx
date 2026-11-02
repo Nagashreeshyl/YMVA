@@ -6,17 +6,19 @@ import { PageHeader } from "@/components/ui";
 import { can } from "@/lib/permissions";
 import { useMe } from "@/lib/session";
 import { AccountSettings } from "./account";
+import { ApiKeySettings } from "./api-keys";
 import { AuditLogList } from "./audit-log";
 import { DoNotCallSettings } from "./do-not-call";
 import { HealthSettings } from "./health";
 import { TeamSettings } from "./team";
 
-type Tab = "team" | "health" | "dnc" | "audit" | "account";
+type Tab = "team" | "keys" | "health" | "dnc" | "audit" | "account";
 
 export default function SettingsPage() {
   const { data: me } = useMe();
   const allowed: Record<Tab, boolean> = {
     team: can(me, "users.manage"),
+    keys: can(me, "users.manage"),
     health: can(me, "settings.manage"),
     dnc: can(me, "dnc.manage"),
     audit: can(me, "audit.view"),
@@ -25,6 +27,7 @@ export default function SettingsPage() {
   const tabs = (
     [
       { id: "team", label: "Team" },
+      { id: "keys", label: "API keys" },
       { id: "health", label: "Health & alerts" },
       { id: "dnc", label: "Do not call" },
       { id: "audit", label: "Audit log" },
@@ -67,6 +70,7 @@ export default function SettingsPage() {
       </div>
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
         {tab === "team" && allowed.team && me && <TeamSettings currentUserId={me.id} />}
+        {tab === "keys" && allowed.keys && <ApiKeySettings />}
         {tab === "health" && allowed.health && <HealthSettings canEdit />}
         {tab === "dnc" && allowed.dnc && <DoNotCallSettings canEdit />}
         {tab === "audit" && allowed.audit && <AuditLogList />}

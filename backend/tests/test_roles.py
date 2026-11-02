@@ -25,7 +25,12 @@ async def test_each_role_reaches_only_what_it_may(admin_client: httpx.AsyncClien
     setup = await _setup(c)
     aid, number = setup["agent"]["id"], setup["number"]["id"]
     for role in ROLES[1:]:
-        user = {"email": f"{role}@x.co", "name": role, "role": role, "password": f"{role}-password-1"}
+        user = {
+            "email": f"{role}@x.co",
+            "name": role,
+            "role": role,
+            "password": f"{role}-password-1",
+        }
         assert (await c.post("/api/users", json=user)).status_code == 201
 
     call: dict[str, Any] = {"agent_id": aid, "from_number_id": number, "to": "98450 11111"}

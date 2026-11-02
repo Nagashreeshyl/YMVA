@@ -1,0 +1,25 @@
+{
+  "name": "n8n-nodes-ymva",
+  "version": "1.0.0",
+  "description": "n8n node for YMVA (Yellow Metal Voice Agent): start AI phone calls and get their results.",
+  "license": "UNLICENSED",
+  "private": true,
+  "keywords": ["n8n-community-node-package", "ymva", "voice agent"],
+  "main": "index.js",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc && cp nodes/Ymva/ymva.svg dist/nodes/Ymva/ymva.svg"
+  },
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": ["dist/credentials/YmvaApi.credentials.js"],
+    "nodes": ["dist/nodes/Ymva/Ymva.node.js"]
+  },
+  "devDependencies": {
+    "n8n-workflow": "2.43.5",
+    "typescript": "5.9.3"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  }
+}

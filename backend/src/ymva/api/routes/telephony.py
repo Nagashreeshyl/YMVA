@@ -29,6 +29,7 @@ from ymva.models import (
     ProviderAccount,
     TelephonyProvider,
 )
+from ymva.services import callback
 from ymva.services.calls import (
     CallSetupError,
     check_capacity,
@@ -202,6 +203,9 @@ async def call_status(
         call.status = CallStatus(hook.status)
         call.ended_at = datetime.now(UTC)
         call.end_reason = (hook.hangup_cause or hook.status or "")[:64]
+        if call.callback_url:  # never answered, so no analysis will send it
+            await db.commit()
+            callback.schedule(call.id)
     if (
         call.duration_seconds is None
         and hook.duration_seconds is not None
