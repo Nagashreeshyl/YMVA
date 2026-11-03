@@ -208,6 +208,8 @@ async def _sheets_token(service_account: dict[str, Any]) -> str:
     from google.auth.transport.requests import Request
     from google.oauth2.service_account import Credentials
 
+    # The pasted file's token_uri would be fetched outside the egress guard: always use Google's.
+    service_account = {**service_account, "token_uri": "https://oauth2.googleapis.com/token"}
     creds = Credentials.from_service_account_info(  # type: ignore[no-untyped-call]
         service_account, scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
@@ -433,6 +435,9 @@ async def _run_http(
         # Secrets go in before the caller's values, so nothing a caller says can pull one in.
         return SECRET_RE.sub(lambda m: escape(stored.values.get(m.group(1), "")), text)
 
+    if any(v.strip() in (".", "..") for v in values.values()):
+        # The URL library would resolve them as path steps and reach another endpoint.
+        raise ToolError("That value isn't valid here")
     url = render(
         with_secrets(config.url, lambda v: quote(v, safe="")),
         {k: quote(v, safe="") for k, v in values.items()},
@@ -458,9 +463,13 @@ async def _run_http(
     ) as client:
         response = await client.request(config.method, url, headers=headers, content=content)
     text = response.text
-    for secret in stored.values.values():  # the agent never gets to see a secret
+    # The agent never gets to see a secret, even one the service echoes back escaped.
+    hidden = [*stored.values.values(), *stored.headers.values()]
+    hidden += [h.split()[-1] for h in stored.headers.values() if h.split()]  # "Bearer <key>"
+    for secret in hidden:
         if len(secret) >= 4:
-            text = text.replace(secret, "•••")
+            for form in {secret, quote(secret, safe=""), json.dumps(secret)[1:-1]}:
+                text = text.replace(form, "•••")
     text = text[:MAX_RESULT_CHARS]
     try:
         data: Any = json.loads(text)

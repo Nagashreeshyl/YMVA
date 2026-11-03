@@ -27,11 +27,22 @@ class BlockedDestinationError(httpx.RequestError):
         super().__init__(message)
 
 
-def _blocked(ip: str) -> bool:
+# What EGRESS_ALLOW_PRIVATE opens: company networks only, never metadata, loopback or 0.0.0.0.
+COMPANY_NETWORKS = [
+    ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")
+]
+
+
+def _address(ip: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
     addr = ipaddress.ip_address(ip.split("%")[0])
     if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
-        addr = addr.ipv4_mapped
-    if addr.is_private and not addr.is_loopback and get_settings().egress_allow_private:
+        return addr.ipv4_mapped
+    return addr
+
+
+def _blocked(ip: str) -> bool:
+    addr = _address(ip)
+    if get_settings().egress_allow_private and any(addr in n for n in COMPANY_NETWORKS):
         return False
     return (
         addr.is_loopback
@@ -54,11 +65,29 @@ async def safe_ip(host: str) -> str:
     except OSError as exc:
         raise httpx.ConnectError(f"Couldn't find {host}") from exc
     ips = [str(info[4][0]) for info in infos]
-    if not ips or any(_blocked(ip) for ip in ips):
+    if not ips or any(_blocked(ip) for ip in ips) or not await _outside_stack(ips):
         raise BlockedDestinationError(
             f"YMVA doesn't send requests to {host}: it's this server or an internal address"
         )
     return ips[0]
+
+
+async def _outside_stack(ips: list[str]) -> bool:
+    """With private networks allowed, this stack's own containers (on a private Docker network)
+    stay blocked by their current addresses."""
+    if not get_settings().egress_allow_private:
+        return True  # private addresses are already blocked
+    loop = asyncio.get_running_loop()
+    found = await asyncio.gather(
+        *(loop.getaddrinfo(h, None) for h in INTERNAL_HOSTS), return_exceptions=True
+    )
+    ours = {
+        _address(str(info[4][0]))
+        for result in found
+        if not isinstance(result, BaseException)
+        for info in result
+    }
+    return not any(_address(ip) in ours for ip in ips)
 
 
 async def check_destination(url: str) -> None:

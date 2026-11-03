@@ -175,6 +175,48 @@ async def test_secret_placeholders_are_filled_and_never_shown(
     ) == ["bot_token", "chat_id"]
 
 
+async def test_caller_words_cannot_step_to_another_endpoint(
+    requests_seen: list[httpx.Request],
+) -> None:
+    for value in ("..", ".", " .. "):
+        result = await tools_service.run_tool(
+            "http",
+            {"url": "https://crm.example.com/customers/{{id}}/statement"},
+            {"headers": {"Authorization": "Bearer secret-key"}},
+            {"id": value},
+        )
+        assert result == {"ok": False, "error": "That value isn't valid here"}
+    assert requests_seen == []
+
+
+async def test_header_keys_are_scrubbed_even_when_echoed_escaped(
+    requests_seen: list[httpx.Request],
+) -> None:
+    result = await tools_service.run_tool(
+        "http",
+        {"url": "https://crm.example.com/notes/1", "body": '{"note": "{{note}}"}'},
+        {"headers": {"Authorization": "Bearer s3cret/key+1"}},
+        {"note": "s3cret%2Fkey%2B1 and s3cret/key+1"},
+    )
+    assert "s3cret" not in json.dumps(result)
+
+
+async def test_sheets_login_always_goes_to_google(monkeypatch: pytest.MonkeyPatch) -> None:
+    from google.oauth2 import service_account
+
+    seen: dict[str, Any] = {}
+
+    def from_info(info: dict[str, Any], **_: Any) -> Any:
+        seen.update(info)
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(service_account.Credentials, "from_service_account_info", from_info)
+    key = {"client_email": "x@y.iam", "token_uri": "http://169.254.169.254/token"}
+    with pytest.raises(RuntimeError):
+        await tools_service._sheets_token(key)
+    assert seen["token_uri"] == "https://oauth2.googleapis.com/token"
+
+
 async def test_tool_names_and_deletion_rules(admin_client: httpx.AsyncClient) -> None:
     bad = await admin_client.post("/api/tools", json={**SHEET_TOOL, "name": "end_call"})
     assert bad.status_code == 422

@@ -18,6 +18,8 @@ def normalise_e164(value: str) -> str:
         digits = digits[2:]
     elif len(digits) == 11 and digits.startswith("0"):  # Indian trunk prefix, e.g. 080 ...
         digits = digits[1:]
+    elif len(digits) == 13 and digits.startswith("910"):  # +91 0 80 ..., same number
+        digits = "91" + digits[3:]
     if len(digits) == 10:  # Indian national number without country code
         digits = "91" + digits
     if not 11 <= len(digits) <= 15:

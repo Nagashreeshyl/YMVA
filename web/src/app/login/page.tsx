@@ -7,8 +7,10 @@ import { api } from "@/lib/api";
 
 function safeNext(): string {
   const next = new URLSearchParams(window.location.search).get("next");
-  // Only allow same-site relative paths.
-  return next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
+  if (!next?.startsWith("/")) return "/";
+  // Resolve it the way the browser will (it reads "/\evil.example" as another site): same site only.
+  const url = new URL(next, window.location.origin);
+  return url.origin === window.location.origin ? url.pathname + url.search + url.hash : "/";
 }
 
 export default function LoginPage() {

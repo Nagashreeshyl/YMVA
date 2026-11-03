@@ -443,3 +443,16 @@ async def test_an_expired_public_address_is_explained_before_dialing(
     monkeypatch.setattr(httpx.AsyncClient, "get", unreachable)
     with pytest.raises(CallSetupError, match="--tunnel"):
         await outbound_service._check_public_address("Vobiz")
+
+
+def test_plus_91_zero_is_the_same_number() -> None:
+    from ymva.api.routes.numbers import normalise_e164
+
+    assert normalise_e164("+91 080 1234 5678") == normalise_e164("080 1234 5678") == "+918012345678"
+
+
+def test_caller_words_export_as_text_not_formulas() -> None:
+    from ymva.api.routes.campaigns import _text_cell
+
+    assert _text_cell('=HYPERLINK("http://x")') == '\'=HYPERLINK("http://x")'
+    assert _text_cell("Will pay on Friday") == "Will pay on Friday"

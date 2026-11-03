@@ -243,3 +243,33 @@ async def test_tools_connect_only_to_the_address_that_was_checked(
     # A caller's words can't choose the server.
     with pytest.raises(ValueError):
         HttpConfig(url="https://{{host}}/x")
+
+
+async def test_allowing_private_networks_still_blocks_metadata_and_this_stack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import socket
+
+    from ymva.config import get_settings
+    from ymva.services import egress
+
+    monkeypatch.setattr(get_settings(), "egress_allow_private", True)
+    stack = {"redis": "172.18.0.3"}
+
+    async def getaddrinfo(host: str, *_: Any, **__: Any) -> list[Any]:
+        if host in egress.INTERNAL_HOSTS and host not in stack:
+            raise OSError("not running")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (stack.get(host, host), 0))]
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", getaddrinfo)
+    assert await egress.safe_ip("192.168.1.20") == "192.168.1.20"  # the company CRM
+    for blocked in ("169.254.169.254", "0.0.0.0", "127.0.0.1", "172.18.0.3"):  # noqa: S104
+        with pytest.raises(egress.BlockedDestinationError):
+            await egress.safe_ip(blocked)
+
+
+def test_login_never_sends_people_to_another_site() -> None:
+    from pathlib import Path
+
+    page = (Path(__file__).parents[2] / "web/src/app/login/page.tsx").read_text()
+    assert "url.origin === window.location.origin" in page

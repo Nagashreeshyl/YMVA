@@ -40,6 +40,7 @@ from ymva.models import (
     TelephonyProvider,
     User,
 )
+from ymva.models.user import acting_api_key
 from ymva.permissions import Perm, can
 from ymva.services import analysis, audit
 from ymva.services.builder import INTERVIEWER_NAME, interviewer
@@ -160,10 +161,22 @@ async def _from_number(
     )
 
 
+def _own_calls(user: User) -> Any:
+    """Callers see only the calls they placed; an API key, only the calls it placed itself."""
+    if key_id := acting_api_key(user):
+        return Call.placed_by_api_key_id == key_id
+    return (Call.placed_by_id == user.id) & Call.placed_by_api_key_id.is_(None)
+
+
 def _visible(user: User, call: Call) -> bool:
-    """Callers see only the calls they placed."""
-    return can(user.role, Perm.CALLS_VIEW_ALL) or (
-        call.placed_by_id is not None and call.placed_by_id == user.id
+    if can(user.role, Perm.CALLS_VIEW_ALL):
+        return True
+    if key_id := acting_api_key(user):
+        return call.placed_by_api_key_id == key_id
+    return (
+        call.placed_by_id is not None
+        and call.placed_by_id == user.id
+        and (call.placed_by_api_key_id is None)
     )
 
 
@@ -180,7 +193,7 @@ async def list_calls(
 ) -> dict[str, Any]:
     query = select(Call)
     if not can(user.role, Perm.CALLS_VIEW_ALL):
-        query = query.where(Call.placed_by_id == user.id)
+        query = query.where(_own_calls(user))
     if outcome:
         query = query.where(Call.outcome == outcome)
     if agent_id:

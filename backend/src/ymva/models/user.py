@@ -28,6 +28,12 @@ class User(UUIDPk, Timestamps, Base):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+def acting_api_key(user: User) -> uuid.UUID | None:
+    """The API key a request's stand-in user acts for (see api/deps.py), or None for a person."""
+    key_id: uuid.UUID | None = getattr(user, "_api_key_id", None)
+    return key_id
+
+
 class UserSession(UUIDPk, Base):
     __tablename__ = "user_sessions"
 

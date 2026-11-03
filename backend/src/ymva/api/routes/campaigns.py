@@ -467,6 +467,11 @@ async def list_contacts(
     }
 
 
+def _text_cell(value: str) -> str:
+    """What a caller said, kept as text: a leading = + - @ would run as a spreadsheet formula."""
+    return "'" + value if value[:1] in ("=", "+", "-", "@", "\t", "\r") else value
+
+
 @router.get("/{campaign_id}/export.csv")
 async def export_results(campaign_id: uuid.UUID, _: CampaignManager, db: DbSession) -> Response:
     """Every contact with its result: their details, status, outcome, summary and details."""
@@ -495,10 +500,13 @@ async def export_results(campaign_id: uuid.UUID, _: CampaignManager, db: DbSessi
                 *(c.variables.get(v, "") for v in variable_names),
                 c.status.value,
                 c.attempts,
-                c.outcome or "",
+                _text_cell(c.outcome or ""),
                 c.last_result or "",
-                c.summary or "",
-                *(c.extracted.get(d, "") for d in detail_names),
+                _text_cell(c.summary or ""),
+                *(
+                    _text_cell("" if (v := c.extracted.get(d)) is None else str(v))
+                    for d in detail_names
+                ),
             ]
         )
     filename = re.sub(r"[^A-Za-z0-9_-]+", "-", campaign.name).strip("-") or "campaign"

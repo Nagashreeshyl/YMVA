@@ -73,6 +73,18 @@ async def test_app_starts_a_call_with_a_caller_key(
         await app.patch(f"/api/agents/{setup['agent']['id']}", json={"name": "x"})
     ).status_code == 403
 
+    # Another Caller key from the same admin never sees this key's calls, nor the admin's.
+    other_key = (await c.post("/api/api-keys", json={"name": "crm", "role": "caller"})).json()
+    other = httpx.AsyncClient(
+        transport=c._transport,
+        base_url=str(c.base_url),
+        headers={"authorization": f"Bearer {other_key['key']}"},
+    )
+    assert (await other.get(f"/api/calls/{call_id}")).status_code == 404
+    assert (await other.get("/api/calls")).json()["total"] == 0
+    assert [x["id"] for x in (await app.get("/api/calls")).json()["items"]] == [call_id]
+    assert (await c.get(f"/api/calls/{call_id}")).status_code == 200  # admins see every call
+
     revoked = await c.delete(f"/api/api-keys/{made.json()['id']}")
     assert revoked.status_code == 204
     assert (await app.get("/api/agents")).status_code == 401

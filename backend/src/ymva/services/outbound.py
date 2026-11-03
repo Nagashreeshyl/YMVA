@@ -20,6 +20,7 @@ from ymva.models import (
     TelephonyProvider,
     User,
 )
+from ymva.models.user import acting_api_key
 from ymva.services.calls import (
     CallSetupError,
     DoNotCallError,
@@ -118,6 +119,7 @@ async def start_outbound_call(
         from_number=number.e164,
         to_number=to,
         placed_by_id=placed_by.id if placed_by else None,
+        placed_by_api_key_id=acting_api_key(placed_by) if placed_by else None,
         callback_url=callback_url,
         variables=string_variables(variables),
         # The settings this call runs with, read again by the after-call results.

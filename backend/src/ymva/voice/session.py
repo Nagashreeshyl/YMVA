@@ -336,7 +336,10 @@ class CallSession:
             CallEventType.TOOL_CALL, tool.name, data={"tool": tool.name, "arguments": args}
         )
         now = datetime.now(ZoneInfo(get_settings().timezone))
-        values = call_facts(now, self.setup.customer_phone) | self.setup.variables | args
+        facts = call_facts(now, self.setup.customer_phone)
+        # Real facts win over call details and the AI's words, so a lookup by customer_phone
+        # can only ever find this caller.
+        values = self.setup.variables | args | {k: v for k, v in facts.items() if v}
         same = (tool.name, json.dumps({k: v.strip().casefold() for k, v in args.items()},
                                       sort_keys=True))  # fmt: skip
         # One tool run at a time per call, so two quick identical requests can't both run.

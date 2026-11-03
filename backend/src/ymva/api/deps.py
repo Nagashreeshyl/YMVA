@@ -47,7 +47,7 @@ async def _user_from_api_key(db: AsyncSession, token: str) -> User | None:
     key.last_used_at = datetime.now(UTC)
     await db.commit()
     # API keys act as a synthetic, non-persisted user carrying the key's role.
-    return User(
+    user = User(
         id=key.created_by_id,
         email=f"api-key:{key.name}",
         name=key.name,
@@ -55,6 +55,9 @@ async def _user_from_api_key(db: AsyncSession, token: str) -> User | None:
         is_active=True,
         created_at=key.created_at,
     )
+    # Calls a key places are its own: a Caller key sees only those (models.user.acting_api_key).
+    user._api_key_id = key.id  # type: ignore[attr-defined]
+    return user
 
 
 def is_api_key_header(auth: str) -> bool:
