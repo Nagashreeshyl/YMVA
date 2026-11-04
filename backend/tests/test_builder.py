@@ -5,7 +5,7 @@ import pytest
 
 from ymva.services import builder
 from ymva.services import integrations as integrations_service
-from ymva.services.builder import AgentSpec, AssistantResult, from_spec, to_spec
+from ymva.services.builder import AgentSpec, AssistantResult, NewAgent, from_spec, to_spec
 from ymva.voice.config import AgentConfig
 from ymva.voice.templates import blank, interest_reminder
 
@@ -13,6 +13,11 @@ from ymva.voice.templates import blank, interest_reminder
 def _spec(**overrides: Any) -> AgentSpec:
     spec = to_spec(interest_reminder(), "Reminder", "Reminds customers")
     return spec.model_copy(update=overrides)
+
+
+def _new(tools: list[Any] | None = None, **overrides: Any) -> NewAgent:
+    """What Gemini returns when it writes a new agent."""
+    return NewAgent(**_spec(**overrides).model_dump(), tools=tools or [])
 
 
 @pytest.fixture(autouse=True)
@@ -55,7 +60,7 @@ async def test_generate_creates_agent_and_starts_chat(
     admin_client: httpx.AsyncClient, _fake_gemini: list[Any]
 ) -> None:
     await _with_key(admin_client)
-    _fake_gemini.append(_spec(name="EMI reminder", description="Reminds about EMIs"))
+    _fake_gemini.append(_new(name="EMI reminder", description="Reminds about EMIs"))
     resp = await admin_client.post(
         "/api/agents/generate", json={"description": "Call customers about their EMI due date"}
     )
@@ -71,7 +76,7 @@ async def test_generate_retries_an_invalid_agent(
     admin_client: httpx.AsyncClient, _fake_gemini: list[Any]
 ) -> None:
     await _with_key(admin_client)
-    _fake_gemini.extend([_spec(default_language="xx"), _spec()])
+    _fake_gemini.extend([_new(default_language="xx"), _new()])
     resp = await admin_client.post("/api/agents/generate", json={"description": "A reminder agent"})
     assert resp.status_code == 201, resp.text
 
@@ -187,7 +192,7 @@ async def test_agent_is_built_from_a_talked_through_conversation(
         await db.commit()
         call_id = str(call.id)
 
-    _fake_gemini.append(_spec(name="EMI reminder"))
+    _fake_gemini.append(_new(name="EMI reminder"))
     resp = await admin_client.post("/api/agents/generate", json={"call_id": call_id})
     assert resp.status_code == 201, resp.text
     history = (await admin_client.get(f"/api/agents/{resp.json()['id']}/assistant")).json()
@@ -399,3 +404,66 @@ async def test_yma_attaches_result_senders_after_the_call(
     assert config["analysis"]["send_to"] == ["send_telegram_summary"]
     assert "send_telegram_summary" not in config["tools"]  # runs once the call ends
     assert "secure field" in turn["messages"][1]["content"]
+
+
+async def test_new_agent_gets_transfer_and_its_results_tool(
+    admin_client: httpx.AsyncClient, _fake_gemini: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real talk-through asked for a manager transfer and results in a Google Sheet and on
+    Telegram; the build dropped both."""
+    from ymva.services import tool_builder
+    from ymva.services.builder import ToolRequest
+    from ymva.services.tool_builder import GeneratedTool
+
+    monkeypatch.setattr(tool_builder, "ask_gemini", builder.ask_gemini)  # same fake queue
+    await _with_key(admin_client)
+    sheet = GeneratedTool(
+        name="log_call_results",
+        description="Saves each call's results.",
+        type="google_sheets",
+        params=[],
+        sheet_action="append_row",
+        sheet_columns=[{"header": "Summary", "value": "{{summary}}"}],
+        sheet_match_column="",
+        sheet_match_value="",
+        sheet_link="",
+        http_method="POST",
+        http_url="",
+        http_body="",
+        db_query="",
+        db_mode="read",
+    )
+    _fake_gemini.extend(
+        [
+            _new(
+                transfer_enabled=True,
+                transfer_when="The customer asks for the manager",
+                tools=[
+                    ToolRequest(
+                        name="log_call_results", when="after_call", request="Save to our sheet"
+                    )
+                ],
+            ),
+            sheet,
+        ]
+    )
+    resp = await admin_client.post(
+        "/api/agents/generate", json={"description": "Remind customers; transfer to manager"}
+    )
+    assert resp.status_code == 201, resp.text
+    config = resp.json()["config"]
+    assert config["transfer"]["enabled"]
+    assert config["transfer"]["when"] == "The customer asks for the manager"
+    assert config["analysis"]["send_to"] == ["log_call_results"]  # runs after the call
+    chat = (await admin_client.get(f"/api/agents/{resp.json()['id']}/assistant")).json()
+    assert "paste the Google Sheet's link" in chat[1]["content"]
+    assert "Transfer section" in chat[1]["content"]
+
+
+def test_interview_has_no_transfer_rule() -> None:
+    from ymva.voice.prompts import system_instruction
+
+    config = builder.interviewer()
+    assert "cannot transfer" in system_instruction(config, {}, "en", "Asia/Kolkata")
+    talk = system_instruction(config, {}, "en", "Asia/Kolkata", interview=True)
+    assert "cannot transfer" not in talk and "Connect the customer to a person" in talk

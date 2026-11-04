@@ -63,6 +63,7 @@ async def load_setup(
         output_sample_rate=output_sample_rate,
         tools=tools,
         transfer_to=transfer_to,
+        interview=call.agent_version_id is None,  # only the builder interview has no version
         customer_phone=call.to_number
         if call.direction == CallDirection.OUTBOUND
         else call.from_number,

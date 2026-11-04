@@ -134,6 +134,7 @@ class CallSetup:
     # The agent's fixed transfer number, or the customer's branch manager (services.branches).
     transfer_to: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    interview: bool = False  # the agent builder's "Talk it through" call
 
 
 def make_mixer(config: AgentConfig) -> AmbienceMixer | None:
@@ -427,7 +428,13 @@ class CallSession:
         config = self.setup.config
         variables = self.setup.variables
         self.opening = opening_language(config, variables)
-        instruction = system_instruction(config, variables, self.opening, get_settings().timezone)
+        instruction = system_instruction(
+            config,
+            variables,
+            self.opening,
+            get_settings().timezone,
+            interview=self.setup.interview,
+        )
         transfer = [transfer_schema(config.transfer.when)] if self._can_transfer else []
         tools = ToolsSchema(
             standard_tools=[END_CALL, *transfer, *(t.schema() for t in self.setup.tools)]

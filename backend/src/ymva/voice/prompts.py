@@ -198,8 +198,16 @@ def _transfer_rule(config: AgentConfig) -> str:
 
 
 def system_instruction(
-    config: AgentConfig, variables: dict[str, str], opening: str, timezone: str
+    config: AgentConfig,
+    variables: dict[str, str],
+    opening: str,
+    timezone: str,
+    *,
+    interview: bool = False,
 ) -> str:
+    """`interview`: the agent builder's interview, which talks about another agent's
+    transfers; this call's own "you can't transfer" rule made it tell admins transfers
+    don't exist."""
     now = datetime.now(ZoneInfo(timezone))
     known = "\n".join(f"- {k}: {_with_words(v)}" for k, v in variables.items() if v) or "- (none)"
     # Accent and language rules first: placed after a long prompt, Gemini Live ignored them
@@ -207,7 +215,7 @@ def system_instruction(
     accent = INDIAN_ACCENT + "\n\n" if config.mode == "gemini_live" else ""
     return f"""{accent}{_language_rules(config, variables, opening)}
 
-{_transfer_rule(config)}
+{"" if interview else _transfer_rule(config)}
 
 {render(config.system_prompt, variables, missing="[not provided]").strip()}
 

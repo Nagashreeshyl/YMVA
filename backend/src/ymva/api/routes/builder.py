@@ -159,6 +159,14 @@ async def generate(
     except BuilderError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     name = (body.name or "").strip() or spec.name.strip()[:120] or "New agent"
+    notes: list[str] = []
+    if spec.tools:
+        config, _, notes = await _make_tools(db, admin, request, key, spec.tools, config)
+    if config.transfer.enabled and config.transfer.number is None:
+        notes.append(
+            "Transfer to a person is on: add the number to connect to, or choose the branch "
+            "manager, in the Transfer section."
+        )
     agent = Agent(name=name, description=spec.description[:2000], created_by_id=admin.id)
     db.add(agent)
     await db.flush()
@@ -181,7 +189,9 @@ async def generate(
         AgentAssistantMessage(
             agent_id=agent.id,
             role="assistant",
-            content=f"I built {name}. Test it in the browser, then tell me what to change.",
+            content=" ".join(
+                [f"I built {name}.", *notes, "Test it in the browser, then tell me what to change."]
+            ),
         )
     )
     await audit.record(

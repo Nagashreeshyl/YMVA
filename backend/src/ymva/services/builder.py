@@ -83,6 +83,11 @@ class AgentSpec(BaseModel):
     silence_timeout_seconds: int
     office_background: bool
     typing_during_tools: bool
+    transfer_enabled: bool = Field(
+        description="True when the admin wants the agent to connect callers to a person or "
+        "manager on request"
+    )
+    transfer_when: str = Field(description="When to connect the caller to a person, one line")
     outcomes: list[TrackedSpec] = Field(
         description="After the call: the possible results; each call gets exactly one"
     )
@@ -115,6 +120,14 @@ class ToolTest(BaseModel):
     values: list[TestValue] = Field(
         default_factory=list,
         description="Sample values for its {{placeholders}}, e.g. customer_name: Test Customer",
+    )
+
+
+class NewAgent(AgentSpec):
+    tools: list[ToolRequest] = Field(
+        default_factory=list,
+        description="Tools to set up for this agent: saving or sending the call's results "
+        "(Google Sheet, Telegram, email, CRM) or looking something up mid-call; empty if none",
     )
 
 
@@ -163,6 +176,10 @@ Platform facts:
   announcement, and every one must be listed in variables with a description and an example.
   Two optional variables are understood by the platform: preferred_language (a language code)
   and state (the customer's state, which picks the greeting language).
+- Transfer: on phone calls the agent can connect the caller to a person (a fixed number or
+  the customer's branch manager, chosen in the editor) when the caller asks. Turn it on
+  (transfer_enabled) whenever the admin wants calls handed to a person or manager, and say
+  when in transfer_when; the platform adds the transfer rules itself.
 - The platform already adds rules for phone speech (short replies, one question at a time, no
   lists or symbols, never invent details, say goodbye and hang up). Do not repeat them.
 
@@ -245,6 +262,7 @@ The admin asks you to change the agent or asks questions about it.
 - Sending or saving a call's results (a summary, the outcome, what the customer said) to a
   sheet, Telegram, email or CRM is an after_call tool: it runs once the call ends with the
   full summary and details, so don't add a step for it in the instructions.
+  One tool per place: a sheet and a Telegram message are two tools.
 - When the admin no longer wants a tool, put its name in "remove_tools" and take it out of
   the instructions.
 - When the admin asks to test or try a tool ("send me a test message"), put it in
@@ -275,6 +293,8 @@ def to_spec(config: AgentConfig, name: str, description: str) -> AgentSpec:
         silence_timeout_seconds=config.limits.silence_timeout_seconds,
         office_background=config.atmosphere.room_tone,
         typing_during_tools=config.atmosphere.typing_while_thinking,
+        transfer_enabled=config.transfer.enabled,
+        transfer_when=config.transfer.when,
         outcomes=[TrackedSpec(**o.model_dump()) for o in config.analysis.outcomes],
         details=[TrackedSpec(**d.model_dump()) for d in config.analysis.details],
     )
@@ -318,6 +338,8 @@ def from_spec(spec: AgentSpec, base: AgentConfig) -> AgentConfig:
     }
     data["atmosphere"]["room_tone"] = spec.office_background
     data["atmosphere"]["typing_while_thinking"] = spec.typing_during_tools
+    data["transfer"]["enabled"] = spec.transfer_enabled
+    data["transfer"]["when"] = spec.transfer_when.strip()[:500] or base.transfer.when
     data["analysis"]["outcomes"] = [_tracked(o).model_dump() for o in spec.outcomes]
     data["analysis"]["details"] = [_tracked(d).model_dump() for d in spec.details]
     return AgentConfig.model_validate(data)
@@ -360,13 +382,22 @@ def _text(role: str, text: str) -> types.Content:
     return types.Content(role=role, parts=[types.Part(text=text)])
 
 
+NEW_AGENT_TOOLS = """\
+If the admin wants the call's results saved or sent somewhere (a Google Sheet, Telegram,
+email, a CRM), or the agent to look something up during the call, list each in "tools": an
+after_call tool for saving or sending results (it runs once the call ends with the summary,
+outcome and details, so don't add a step for it in system_prompt), a during_call tool for a
+lookup. One tool per place: a sheet and a Telegram message are two tools. Put any sheet
+link, columns or address the admin gave in its request."""
+
+
 async def generate_agent(
     brief: str, api_key: str, base: AgentConfig
-) -> tuple[AgentSpec, AgentConfig]:
+) -> tuple[NewAgent, AgentConfig]:
     """Write a whole agent from the admin's description."""
     contents = [_text("user", f"Design a voice agent from this description:\n\n{brief}")]
     for _ in range(2):
-        spec = await ask_gemini(api_key, GUIDE, contents, AgentSpec)
+        spec = await ask_gemini(api_key, f"{GUIDE}\n\n{NEW_AGENT_TOOLS}", contents, NewAgent)
         try:
             return spec, from_spec(spec, base)
         except ValidationError as error:
@@ -436,7 +467,19 @@ Find out, one short question at a time, in a natural order:
   number, amount due, due date) and what it must find out from them.
 - The dos and don'ts, and what to do when things don't go to plan: wrong person, customer
   busy, refuses, angry, asks something it can't answer, wants a callback or a human.
-- What results to note after each call (for example "promised to pay" with the date).
+- What results to note after each call (for example "promised to pay" with the date), and
+  where they should go.
+
+What the new agent can do (so never tell the admin something here isn't possible):
+- Speak Kannada, Telugu, Tamil, Hindi, Malayalam, English and other Indian languages,
+  open in the customer's preferred language or their state's language, and switch when
+  the customer does.
+- Connect the customer to a person, a fixed number or their branch manager, when they ask.
+- Save or send each call's summary, outcome and details after the call: a Google Sheet,
+  Telegram, email, or the company's API or CRM. It can also look things up during a call.
+- Be called in campaigns, by the company's systems or n8n, on a schedule.
+If they ask for something you're unsure of, note it and say it can be set up in the editor
+after the agent is built; never argue about it.
 
 How to talk with them:
 - Let them explain in their own words; don't read out this list. People pause while they
@@ -447,8 +490,9 @@ How to talk with them:
   sensible choice and ask if that's fine.
 - Never ask about technical settings (models, API keys, numbers).
 - When you have the whole picture, summarise the agent in a few sentences and ask if
-  anything should change. When they're happy, tell them to end the call: the agent will be
-  built from this conversation, and they can still edit everything afterwards."""
+  anything should change. When they're happy or ask you to create it, say in one sentence
+  that you'll end the call now and they can press "Build agent" to create it (and edit
+  everything afterwards), then end the call."""
 
 
 def interviewer() -> AgentConfig:
