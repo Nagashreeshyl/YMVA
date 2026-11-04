@@ -1,3 +1,10 @@
+{
+	servers {
+		# Behind another proxy (deploy/behind-traefik.yml), keep the visitor's real address.
+		trusted_proxies static {$TRUSTED_PROXIES:127.0.0.1/32}
+	}
+}
+
 # SITE_ADDRESS is ":80" locally, or your domain (e.g. voice.yellowmetal.co) in production,
 # in which case Caddy obtains and renews HTTPS certificates automatically.
 {$SITE_ADDRESS} {

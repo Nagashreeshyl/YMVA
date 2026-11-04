@@ -107,6 +107,7 @@ services:
       - "${HTTPS_PORT:-443}:443"
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-127.0.0.1/32}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

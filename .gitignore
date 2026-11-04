@@ -24,3 +24,4 @@ node_modules/
 # Impeccable local state
 .impeccable/config.local.json
 .impeccable/live/
+docker-compose.override.yml

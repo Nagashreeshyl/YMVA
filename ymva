@@ -84,7 +84,12 @@ need_docker() {
   docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required (docker compose)."
 }
 
-compose() { docker compose --env-file "$ENV_FILE" -f "$ROOT/docker-compose.yml" "$@"; }
+compose() {
+  # A server's own docker-compose.override.yml (e.g. deploy/behind-traefik.yml) is applied too.
+  local files=(-f "$ROOT/docker-compose.yml")
+  [ -f "$ROOT/docker-compose.override.yml" ] && files+=(-f "$ROOT/docker-compose.override.yml")
+  docker compose --env-file "$ENV_FILE" "${files[@]}" "$@"
+}
 
 public_url() { env_get PUBLIC_URL; }
 

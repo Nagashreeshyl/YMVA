@@ -1,0 +1,13 @@
+# For a server where Traefik already owns ports 80/443 (e.g. Hostinger's n8n VPS template).
+# Copy to docker-compose.override.yml next to docker-compose.yml, set YMVA_HOST in .env
+# (e.g. ymva.srv1234.hstgr.cloud), PUBLIC_URL=https://$YMVA_HOST and TRUSTED_PROXIES=private_ranges,
+# then ./ymva start. Traefik gets the HTTPS certificate; Caddy serves plain HTTP behind it.
+services:
+  caddy:
+    ports: !reset []
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.ymva.rule=Host(`${YMVA_HOST:?set YMVA_HOST in .env}`)
+      - traefik.http.routers.ymva.entrypoints=websecure
+      - traefik.http.routers.ymva.tls.certresolver=letsencrypt
+      - traefik.http.services.ymva.loadbalancer.server.port=80
