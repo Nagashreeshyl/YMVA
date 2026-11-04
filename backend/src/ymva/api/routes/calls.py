@@ -425,7 +425,7 @@ async def browser_call(
             agent_version_id=version.id,
             direction=CallDirection.WEB,
             status=CallStatus.IN_PROGRESS,
-            from_number=f"browser:{user.email}",
+            from_number=f"browser:{user.email}"[:32],  # the column holds 32 characters
             placed_by_id=user.id,
             agent_config=config_used,
             # Test values for the agent's variables arrive as ?var_customer_name=...
@@ -490,7 +490,7 @@ async def builder_interview(websocket: WebSocket) -> None:
             agent_name=INTERVIEWER_NAME,
             direction=CallDirection.WEB,
             status=CallStatus.IN_PROGRESS,
-            from_number=f"browser:{user.email}",
+            from_number=f"browser:{user.email}"[:32],  # the column holds 32 characters
             placed_by_id=user.id,
             agent_config=interviewer().model_dump(mode="json"),
             variables={},

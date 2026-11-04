@@ -10,7 +10,6 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from google.genai.types import ThinkingConfig
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -466,9 +465,8 @@ class CallSession:
                     # Native-audio models choose their reply language themselves; forcing a
                     # language code locks them into it, so it is deliberately not sent.
                     language=None,  # type: ignore[arg-type]
-                    # No reasoning before speaking: replies start about 0.2 s sooner. (Adding
-                    # include_thoughts=False here stops Gemini answering the caller at all.)
-                    thinking=ThinkingConfig(thinking_budget=0),
+                    # No thinking setting: since 4 Nov 2026 Gemini 3.8 Live refuses the connection
+                    # when one is given (it doesn't reason before speaking anyway).
                 ),
                 tools=tools,
                 # Gemini gets the caller's words as text from Sarvam, never the audio.
