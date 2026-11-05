@@ -29,8 +29,9 @@ from ymva.models import (
     PhoneNumber,
 )
 from ymva.redis import get_redis
+from ymva.services import retries
 from ymva.services.analysis import NO_CONVERSATION
-from ymva.services.calls import CallSetupError, DoNotCallError, LinesBusyError
+from ymva.services.calls import BranchError, CallSetupError, DoNotCallError, LinesBusyError
 from ymva.services.drain import is_draining
 from ymva.services.outbound import start_outbound_call
 from ymva.telephony import TelephonyError
@@ -150,11 +151,17 @@ async def _dial(db: AsyncSession, campaign: Campaign, now: datetime) -> bool:
     for contact in due:
         number = numbers[contact.attempts % len(numbers)]  # rotate caller IDs on retries
         try:
-            call = await start_outbound_call(db, agent, number, contact.phone, contact.variables)
+            call = await start_outbound_call(
+                db, agent, number, contact.phone, contact.variables, retries=False
+            )
         except LinesBusyError:
             return False  # out of lines: stop dialing everywhere this tick, try again next
         except DoNotCallError:
             contact.status, contact.last_result = ContactStatus.FAILED, "On the do-not-call list"
+            await db.commit()
+            continue
+        except BranchError as exc:  # this contact's row lacks a valid branch; dial the rest
+            contact.status, contact.last_result = ContactStatus.FAILED, str(exc)[:200]
             await db.commit()
             continue
         except CallSetupError as exc:
@@ -198,7 +205,7 @@ async def tick(now: datetime | None = None) -> None:
         running = list(
             await db.scalars(select(Campaign).where(Campaign.status == CampaignStatus.RUNNING))
         )
-        lines_free = True
+        lines_free = await retries.tick(db, now)
         for campaign in running:
             await _finish_if_done(db, campaign, now)
             if campaign.status != CampaignStatus.RUNNING:

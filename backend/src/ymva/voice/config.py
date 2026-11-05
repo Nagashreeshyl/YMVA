@@ -195,6 +195,15 @@ class CallLimits(BaseModel):
     reply_after_pause_seconds: float = Field(default=0.2, ge=0.2, le=3.0)
 
 
+class Retry(BaseModel):
+    """Call an unreached number again: no answer, busy, failed, voicemail or nobody spoke.
+    Campaigns use their own retry settings instead."""
+
+    enabled: bool = False
+    max_retries: int = Field(default=2, ge=1, le=10)
+    wait_minutes: int = Field(default=30, ge=5, le=1440)
+
+
 class AgentConfig(BaseModel):
     mode: Literal["pipeline", "gemini_live"] = "gemini_live"  # the main mode; pipeline = Standard
     # "everyday_mix": talk like people actually do (Kanglish, Tenglish, Hinglish).
@@ -211,6 +220,9 @@ class AgentConfig(BaseModel):
     state_languages: dict[str, str] = Field(default_factory=dict)
     announcement: Announcement = Field(default_factory=Announcement)
     transfer: Transfer = Field(default_factory=Transfer)
+    # On: every phone call must send a "branch" that matches Settings > Branches.
+    branch_required: bool = False
+    retry: Retry = Field(default_factory=Retry)
     variables: list[Variable] = Field(default_factory=list)
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     gemini_live: GeminiLiveSettings = Field(default_factory=GeminiLiveSettings)
@@ -278,7 +290,9 @@ AUTOMATIC_DETAILS = {"call_date", "call_time", "customer_phone", "preferred_lang
 def call_details(config: "AgentConfig") -> list[Variable]:
     """Per-call details an app starting a call must send: used or declared, minus automatic."""
     described = {v.name: v for v in config.variables}
-    if config.transfer.enabled and config.transfer.to == "branch_manager":
+    if config.branch_required or (
+        config.transfer.enabled and config.transfer.to == "branch_manager"
+    ):
         described.setdefault(
             "branch", Variable(name="branch", description="Branch where the customer took the loan")
         )

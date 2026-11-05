@@ -27,6 +27,10 @@ class DoNotCallError(CallSetupError):
     """The number is on the do-not-call list."""
 
 
+class BranchError(CallSetupError):
+    """The agent needs a branch and the call has none, or one that isn't listed."""
+
+
 class LinesBusyError(CallSetupError):
     """The platform-wide concurrent call limit is reached; try again shortly."""
 

@@ -4,10 +4,26 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
-import { Button, Field, Input, Panel, Segmented, Select, Switch, Textarea } from "@/components/ui";
+import {
+  Button,
+  Field,
+  Input,
+  Panel,
+  Segmented,
+  Select,
+  Switch,
+  Textarea,
+} from "@/components/ui";
 import { VoicePicker } from "@/components/voice-picker";
 import { detectVariables, variableLabel } from "@/lib/variables";
-import { api, type AgentConfig, type AgentDetail, type AgentOptions, type ToolDef, type TrackedItem } from "@/lib/api";
+import {
+  api,
+  type AgentConfig,
+  type AgentDetail,
+  type AgentOptions,
+  type ToolDef,
+  type TrackedItem,
+} from "@/lib/api";
 import { cn } from "@/lib/cn";
 
 type Updater = (draft: AgentConfig) => void;
@@ -19,8 +35,10 @@ const NO_TRANSFER = {
   when: "The caller asks to speak to a person, or needs help you can't give",
 };
 // Same rule as the server: a full number with country code, or 10 Indian digits.
-const isFullNumber = (v: string) => /^(\+\d{11,15}|\d{10})$/.test(v.replace(/[^\d+]/g, ""));
+const isFullNumber = (v: string) =>
+  /^(\+\d{11,15}|\d{10})$/.test(v.replace(/[^\d+]/g, ""));
 export type SaveState = "saved" | "pending" | "saving" | "error";
+const NO_RETRY = { enabled: false, max_retries: 2, wait_minutes: 30 };
 
 const AUTOSAVE_DELAY_MS = 700;
 
@@ -36,27 +54,43 @@ export function AgentEditor({
   onSaveState: (state: SaveState, error?: string) => void;
 }) {
   const queryClient = useQueryClient();
-  const tools = useQuery({ queryKey: ["tools"], queryFn: () => api<ToolDef[]>("/tools") });
+  const tools = useQuery({
+    queryKey: ["tools"],
+    queryFn: () => api<ToolDef[]>("/tools"),
+  });
   // The editor owns its copy; it is re-created (via `key`) when the draft is replaced from outside.
-  const [draft, setDraft] = useState<AgentConfig>(() => structuredClone(agent.config));
+  const [draft, setDraft] = useState<AgentConfig>(() =>
+    structuredClone(agent.config),
+  );
   const transfer = draft.transfer ?? NO_TRANSFER;
+  const retry = draft.retry ?? NO_RETRY;
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const languageName = (code: string) => options.languages.find((l) => l.code === code)?.name ?? code;
+  const languageName = (code: string) =>
+    options.languages.find((l) => l.code === code)?.name ?? code;
   const detected = detectVariables(draft);
   const [previewChoice, setPreviewLanguage] = useState<string | null>(null);
   const previewLanguage =
-    previewChoice && draft.languages.includes(previewChoice) ? previewChoice : draft.default_language;
+    previewChoice && draft.languages.includes(previewChoice)
+      ? previewChoice
+      : draft.default_language;
 
   const save = useMutation({
     mutationFn: (config: AgentConfig) =>
-      api<AgentDetail>(`/agents/${agent.id}/draft`, { method: "PUT", json: { config } }),
+      api<AgentDetail>(`/agents/${agent.id}/draft`, {
+        method: "PUT",
+        json: { config },
+      }),
     onMutate: () => onSaveState("saving"),
     onSuccess: (updated) => {
       queryClient.setQueryData(["agent", agent.id], updated);
       queryClient.invalidateQueries({ queryKey: ["agents"] });
       onSaveState("saved");
     },
-    onError: (error) => onSaveState("error", error instanceof Error ? error.message : "Couldn't save"),
+    onError: (error) =>
+      onSaveState(
+        "error",
+        error instanceof Error ? error.message : "Couldn't save",
+      ),
   });
 
   // Leaving the editor (e.g. switching tabs) saves any change still waiting for the timer.
@@ -118,9 +152,14 @@ export function AgentEditor({
             <Segmented
               label="Speaking style"
               value={draft.speaking_style}
-              onChange={(style) => update((d) => void (d.speaking_style = style))}
+              onChange={(style) =>
+                update((d) => void (d.speaking_style = style))
+              }
               options={[
-                { value: "everyday_mix", label: "Everyday mix (Kanglish, Tenglish…)" },
+                {
+                  value: "everyday_mix",
+                  label: "Everyday mix (Kanglish, Tenglish…)",
+                },
                 { value: "pure", label: "Pure language" },
               ]}
             />
@@ -165,7 +204,9 @@ export function AgentEditor({
                   value={draft.gemini_live.voice}
                   language={previewLanguage}
                   disabled={readOnly}
-                  onChange={(v) => update((d) => void (d.gemini_live.voice = v))}
+                  onChange={(v) =>
+                    update((d) => void (d.gemini_live.voice = v))
+                  }
                 />
               )
             }
@@ -178,9 +219,18 @@ export function AgentEditor({
                   <Select
                     {...p}
                     value={draft.pipeline.llm_model}
-                    onChange={(e) => update((d) => void (d.pipeline.llm_model = e.target.value))}
+                    onChange={(e) =>
+                      update(
+                        (d) => void (d.pipeline.llm_model = e.target.value),
+                      )
+                    }
                   >
-                    {[...new Set([draft.pipeline.llm_model, ...options.llm_models])].map((m) => (
+                    {[
+                      ...new Set([
+                        draft.pipeline.llm_model,
+                        ...options.llm_models,
+                      ]),
+                    ].map((m) => (
                       <option key={m} value={m}>
                         {m}
                       </option>
@@ -188,14 +238,27 @@ export function AgentEditor({
                   </Select>
                 )}
               </Field>
-              <Field label="Backup model" hint="Takes over if the main model fails.">
+              <Field
+                label="Backup model"
+                hint="Takes over if the main model fails."
+              >
                 {(p) => (
                   <Select
                     {...p}
                     value={draft.pipeline.backup_llm_model}
-                    onChange={(e) => update((d) => void (d.pipeline.backup_llm_model = e.target.value))}
+                    onChange={(e) =>
+                      update(
+                        (d) =>
+                          void (d.pipeline.backup_llm_model = e.target.value),
+                      )
+                    }
                   >
-                    {[...new Set([draft.pipeline.backup_llm_model, ...options.llm_models])].map((m) => (
+                    {[
+                      ...new Set([
+                        draft.pipeline.backup_llm_model,
+                        ...options.llm_models,
+                      ]),
+                    ].map((m) => (
                       <option key={m} value={m}>
                         {m}
                       </option>
@@ -203,7 +266,9 @@ export function AgentEditor({
                   </Select>
                 )}
               </Field>
-              <Field label={`Speaking pace · ${draft.pipeline.speaking_pace.toFixed(1)}×`}>
+              <Field
+                label={`Speaking pace · ${draft.pipeline.speaking_pace.toFixed(1)}×`}
+              >
                 {(p) => (
                   <input
                     {...p}
@@ -212,7 +277,14 @@ export function AgentEditor({
                     max={1.6}
                     step={0.1}
                     value={draft.pipeline.speaking_pace}
-                    onChange={(e) => update((d) => void (d.pipeline.speaking_pace = Number(e.target.value)))}
+                    onChange={(e) =>
+                      update(
+                        (d) =>
+                          void (d.pipeline.speaking_pace = Number(
+                            e.target.value,
+                          )),
+                      )
+                    }
                     className="h-10 accent-[var(--ink)]"
                   />
                 )}
@@ -229,7 +301,14 @@ export function AgentEditor({
                     max={1.2}
                     step={0.1}
                     value={draft.pipeline.temperature}
-                    onChange={(e) => update((d) => void (d.pipeline.temperature = Number(e.target.value)))}
+                    onChange={(e) =>
+                      update(
+                        (d) =>
+                          void (d.pipeline.temperature = Number(
+                            e.target.value,
+                          )),
+                      )
+                    }
                     className="h-10 accent-[var(--ink)]"
                   />
                 )}
@@ -242,9 +321,16 @@ export function AgentEditor({
                   <Select
                     {...p}
                     value={draft.gemini_live.model}
-                    onChange={(e) => update((d) => void (d.gemini_live.model = e.target.value))}
+                    onChange={(e) =>
+                      update((d) => void (d.gemini_live.model = e.target.value))
+                    }
                   >
-                    {[...new Set([draft.gemini_live.model, ...options.gemini_live_models])].map((m) => (
+                    {[
+                      ...new Set([
+                        draft.gemini_live.model,
+                        ...options.gemini_live_models,
+                      ]),
+                    ].map((m) => (
                       <option key={m} value={m}>
                         {m.replace("models/", "")}
                       </option>
@@ -264,7 +350,14 @@ export function AgentEditor({
                     max={1.5}
                     step={0.1}
                     value={draft.gemini_live.temperature}
-                    onChange={(e) => update((d) => void (d.gemini_live.temperature = Number(e.target.value)))}
+                    onChange={(e) =>
+                      update(
+                        (d) =>
+                          void (d.gemini_live.temperature = Number(
+                            e.target.value,
+                          )),
+                      )
+                    }
                     className="h-10 accent-[var(--ink)]"
                   />
                 )}
@@ -282,7 +375,9 @@ export function AgentEditor({
           aria-label="Agent instructions"
           rows={18}
           value={draft.system_prompt}
-          onChange={(e) => update((d) => void (d.system_prompt = e.target.value))}
+          onChange={(e) =>
+            update((d) => void (d.system_prompt = e.target.value))
+          }
           className="font-[450]"
         />
       </Panel>
@@ -292,7 +387,11 @@ export function AgentEditor({
         description="The agent opens in the customer's preferred language (or their state's), then follows whatever language they speak, unless you keep it to one below."
       >
         <div className="flex flex-col gap-5">
-          <div className="flex flex-wrap gap-2" role="group" aria-label="Languages the agent speaks">
+          <div
+            className="flex flex-wrap gap-2"
+            role="group"
+            aria-label="Languages the agent speaks"
+          >
             {options.languages.map((l) => {
               const on = draft.languages.includes(l.code);
               return (
@@ -303,12 +402,16 @@ export function AgentEditor({
                   onClick={() => toggleLanguage(l.code)}
                   className={cn(
                     "h-8 rounded-full border px-3.5 text-[13px] transition-colors duration-150",
-                    on ? "border-ink bg-ink text-on-ink" : "border-line-strong text-muted hover:text-ink",
+                    on
+                      ? "border-ink bg-ink text-on-ink"
+                      : "border-line-strong text-muted hover:text-ink",
                   )}
                 >
                   {l.name}{" "}
                   {l.native !== l.name && (
-                    <span className={on ? "opacity-70" : "text-faint"}>{l.native}</span>
+                    <span className={on ? "opacity-70" : "text-faint"}>
+                      {l.native}
+                    </span>
                   )}
                 </button>
               );
@@ -322,7 +425,9 @@ export function AgentEditor({
                 : "When the caller switches language (say Tamil to Kannada), the agent switches with them. If they ask for a language, it keeps to that one."
             }
             checked={draft.follow_caller_language !== false}
-            onChange={(on) => update((d) => void (d.follow_caller_language = on))}
+            onChange={(on) =>
+              update((d) => void (d.follow_caller_language = on))
+            }
           />
           <div className="max-w-xs">
             <Field
@@ -333,7 +438,9 @@ export function AgentEditor({
                 <Select
                   {...p}
                   value={draft.default_language}
-                  onChange={(e) => update((d) => void (d.default_language = e.target.value))}
+                  onChange={(e) =>
+                    update((d) => void (d.default_language = e.target.value))
+                  }
                 >
                   {draft.languages.map((c) => (
                     <option key={c} value={c}>
@@ -345,9 +452,12 @@ export function AgentEditor({
             </Field>
           </div>
           <div className="flex flex-col gap-3">
-            <h3 className="text-[13px] font-medium">Opening line per language</h3>
+            <h3 className="text-[13px] font-medium">
+              Opening line per language
+            </h3>
             <p className="-mt-2 text-2xs text-muted">
-              Leave one empty and the agent will write its own greeting in that language.
+              Leave one empty and the agent will write its own greeting in that
+              language.
             </p>
             {draft.languages.map((code) => (
               <Field key={code} label={languageName(code)}>
@@ -377,7 +487,9 @@ export function AgentEditor({
             label="Play an announcement at the start of every call"
             description="For example, that the call may be recorded."
             checked={draft.announcement.enabled}
-            onChange={(enabled) => update((d) => void (d.announcement.enabled = enabled))}
+            onChange={(enabled) =>
+              update((d) => void (d.announcement.enabled = enabled))
+            }
           />
           {draft.announcement.enabled && (
             <>
@@ -388,7 +500,9 @@ export function AgentEditor({
                     rows={2}
                     className="min-h-0"
                     value={draft.announcement.text}
-                    onChange={(e) => update((d) => void (d.announcement.text = e.target.value))}
+                    onChange={(e) =>
+                      update((d) => void (d.announcement.text = e.target.value))
+                    }
                   />
                 )}
               </Field>
@@ -408,7 +522,9 @@ export function AgentEditor({
                         value={draft.announcement.translations[code] ?? ""}
                         onChange={(e) =>
                           update((d) => {
-                            if (e.target.value) d.announcement.translations[code] = e.target.value;
+                            if (e.target.value)
+                              d.announcement.translations[code] =
+                                e.target.value;
                             else delete d.announcement.translations[code];
                           })
                         }
@@ -421,37 +537,63 @@ export function AgentEditor({
         </div>
       </Panel>
 
+      <Panel title="Customer's branch">
+        <Switch
+          label="Every call must include the customer's branch"
+          description="Calls without a branch listed in Settings → Branches are refused before the phone rings. The branch's state picks the opening language (Karnataka → Kannada, Andhra → Telugu, Tamil Nadu → Tamil) and its manager takes transfers."
+          checked={draft.branch_required ?? false}
+          onChange={(on) => update((d) => void (d.branch_required = on))}
+        />
+      </Panel>
+
       <Panel title="Transfer to a person">
         <div className="flex flex-col gap-4">
           <Switch
             label="Let the agent transfer the call to a colleague"
             description="When the caller asks for a person, the agent says it's connecting them and the call rings this number. Works on phone calls (not browser tests or Exotel)."
             checked={transfer.enabled}
-            onChange={(enabled) => update((d) => void (d.transfer = { ...transfer, enabled }))}
+            onChange={(enabled) =>
+              update((d) => void (d.transfer = { ...transfer, enabled }))
+            }
           />
           {transfer.enabled && (
             <>
               <Segmented
                 label="Transfer to"
                 value={transfer.to ?? "number"}
-                onChange={(to) => update((d) => void (d.transfer = { ...transfer, to }))}
+                onChange={(to) =>
+                  update((d) => void (d.transfer = { ...transfer, to }))
+                }
                 options={[
                   { value: "number", label: "A fixed number" },
-                  { value: "branch_manager", label: "The customer's branch manager" },
+                  {
+                    value: "branch_manager",
+                    label: "The customer's branch manager",
+                  },
                 ]}
               />
               {transfer.to === "branch_manager" && (
                 <p className="text-[13px] text-muted">
-                  Each call then needs the customer&apos;s <strong className="text-ink">branch</strong> (where they
-                  took the loan), and the call goes to that branch&apos;s manager from{" "}
-                  <Link href="/settings" className="underline underline-offset-4">
+                  Each call then needs the customer&apos;s{" "}
+                  <strong className="text-ink">branch</strong> (where they took
+                  the loan), and the call goes to that branch&apos;s manager
+                  from{" "}
+                  <Link
+                    href="/settings"
+                    className="underline underline-offset-4"
+                  >
                     Settings → Branches
                   </Link>
-                  . Customers whose branch isn&apos;t listed go to the number below.
+                  . Customers whose branch isn&apos;t listed go to the number
+                  below.
                 </p>
               )}
               <Field
-                label={transfer.to === "branch_manager" ? "Number when the branch isn't listed" : "Number to transfer to"}
+                label={
+                  transfer.to === "branch_manager"
+                    ? "Number when the branch isn't listed"
+                    : "Number to transfer to"
+                }
                 hint={
                   transfer.phone && !isFullNumber(transfer.phone)
                     ? "Enter the full number; until then the agent can't transfer."
@@ -467,18 +609,37 @@ export function AgentEditor({
                     inputMode="tel"
                     placeholder="+91 80 1234 5678"
                     value={transfer.phone}
-                    onChange={(e) => update((d) => void (d.transfer = { ...transfer, phone: e.target.value }))}
+                    onChange={(e) =>
+                      update(
+                        (d) =>
+                          void (d.transfer = {
+                            ...transfer,
+                            phone: e.target.value,
+                          }),
+                      )
+                    }
                   />
                 )}
               </Field>
-              <Field label="When to transfer" hint="In plain words. The agent follows this.">
+              <Field
+                label="When to transfer"
+                hint="In plain words. The agent follows this."
+              >
                 {(p) => (
                   <Textarea
                     {...p}
                     rows={2}
                     className="min-h-0"
                     value={transfer.when}
-                    onChange={(e) => update((d) => void (d.transfer = { ...transfer, when: e.target.value }))}
+                    onChange={(e) =>
+                      update(
+                        (d) =>
+                          void (d.transfer = {
+                            ...transfer,
+                            when: e.target.value,
+                          }),
+                      )
+                    }
                   />
                 )}
               </Field>
@@ -493,22 +654,34 @@ export function AgentEditor({
       >
         {detected.length === 0 ? (
           <p className="text-[13px] text-muted">
-            No customer details used yet. Add one by typing it in double braces, like {"{{customer_name}}"}.
+            No customer details used yet. Add one by typing it in double braces,
+            like {"{{customer_name}}"}.
           </p>
         ) : (
           <ul className="flex flex-col gap-3">
             {detected.map((name) => (
-              <li key={name} className="grid gap-2 sm:grid-cols-[220px_1fr] sm:items-center">
+              <li
+                key={name}
+                className="grid gap-2 sm:grid-cols-[220px_1fr] sm:items-center"
+              >
                 <code className="w-fit rounded-lg bg-surface px-2.5 py-1.5 font-mono text-[13px]">{`{{${name}}}`}</code>
                 <Input
                   aria-label={`Note for ${name}`}
                   placeholder={`What is ${variableLabel(name).toLowerCase()}? (optional, shown on the call form)`}
-                  value={draft.variables.find((v) => v.name === name)?.description ?? ""}
+                  value={
+                    draft.variables.find((v) => v.name === name)?.description ??
+                    ""
+                  }
                   onChange={(e) =>
                     update((d) => {
                       const existing = d.variables.find((v) => v.name === name);
                       if (existing) existing.description = e.target.value;
-                      else d.variables.push({ name, description: e.target.value, example: "" });
+                      else
+                        d.variables.push({
+                          name,
+                          description: e.target.value,
+                          example: "",
+                        });
                     })
                   }
                 />
@@ -529,7 +702,9 @@ export function AgentEditor({
             items={draft.analysis.outcomes}
             namePlaceholder="e.g. Promised to pay"
             descriptionPlaceholder="When it applies, e.g. Gave a date to pay"
-            onChange={(items) => update((d) => void (d.analysis.outcomes = items))}
+            onChange={(items) =>
+              update((d) => void (d.analysis.outcomes = items))
+            }
           />
           <TrackedList
             label="Details to write down"
@@ -537,17 +712,28 @@ export function AgentEditor({
             items={draft.analysis.details}
             namePlaceholder="e.g. Promised payment date"
             descriptionPlaceholder="What to write, e.g. The date, as YYYY-MM-DD"
-            onChange={(items) => update((d) => void (d.analysis.details = items))}
+            onChange={(items) =>
+              update((d) => void (d.analysis.details = items))
+            }
           />
           <div className="flex flex-col gap-2">
             <div>
               <h3 className="text-[13px] font-medium">Send the results to</h3>
               <p className="text-2xs text-muted">
-                After each call, these tools get the results. They can use {"{{summary}}"}, {"{{outcome}}"},{" "}
-                {"{{duration_seconds}}"}, {"{{call_time}}"}, the customer details and each detail above
+                After each call, these tools get the results. They can use{" "}
+                {"{{summary}}"}, {"{{outcome}}"}, {"{{action_items}}"},{" "}
+                {"{{call_id}}"}, {"{{attempt}}"}, {"{{branch}}"},{" "}
+                {"{{duration_seconds}}"}, {"{{call_time}}"}, the customer
+                details and each detail above
                 {draft.analysis.details.length > 0 &&
                   ` (${draft.analysis.details
-                    .map((d) => `{{${d.name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}}}`)
+                    .map(
+                      (d) =>
+                        `{{${d.name
+                          .toLowerCase()
+                          .replace(/[^a-z0-9]+/g, "_")
+                          .replace(/^_|_$/g, "")}}}`,
+                    )
                     .join(", ")})`}
                 .
               </p>
@@ -555,14 +741,20 @@ export function AgentEditor({
             {(tools.data ?? []).length === 0 ? (
               <p className="text-[13px] text-muted">
                 No tools yet.{" "}
-                <Link href="/tools" className="underline underline-offset-4 hover:text-ink">
+                <Link
+                  href="/tools"
+                  className="underline underline-offset-4 hover:text-ink"
+                >
                   Create one on the Tools page
                 </Link>
                 , e.g. one that adds a row to your results sheet.
               </p>
             ) : (
               tools.data?.map((t) => (
-                <label key={t.id} className="flex items-center gap-3 text-[13px]">
+                <label
+                  key={t.id}
+                  className="flex items-center gap-3 text-[13px]"
+                >
                   <input
                     type="checkbox"
                     checked={draft.analysis.send_to.includes(t.name)}
@@ -590,7 +782,10 @@ export function AgentEditor({
         {(tools.data ?? []).length === 0 ? (
           <p className="text-[13px] text-muted">
             No tools yet.{" "}
-            <Link href="/tools" className="underline underline-offset-4 hover:text-ink">
+            <Link
+              href="/tools"
+              className="underline underline-offset-4 hover:text-ink"
+            >
               Create one on the Tools page
             </Link>
             .
@@ -606,14 +801,25 @@ export function AgentEditor({
                     checked={draft.tools.includes(t.name)}
                     onChange={(e) =>
                       update((d) => {
-                        d.tools = e.target.checked ? [...d.tools, t.name] : d.tools.filter((n) => n !== t.name);
+                        d.tools = e.target.checked
+                          ? [...d.tools, t.name]
+                          : d.tools.filter((n) => n !== t.name);
                       })
                     }
                   />
                   <span>
-                    <span className="font-mono text-[13px] font-medium">{t.name}</span>
-                    {!t.is_active && <span className="text-2xs text-muted"> · switched off</span>}
-                    <span className="block text-[13px] text-muted">{t.description}</span>
+                    <span className="font-mono text-[13px] font-medium">
+                      {t.name}
+                    </span>
+                    {!t.is_active && (
+                      <span className="text-2xs text-muted">
+                        {" "}
+                        · switched off
+                      </span>
+                    )}
+                    <span className="block text-[13px] text-muted">
+                      {t.description}
+                    </span>
                   </span>
                 </label>
               </li>
@@ -622,7 +828,10 @@ export function AgentEditor({
         )}
       </Panel>
 
-      <Panel title="Call atmosphere" description="Sounds are added only where a real call would have them.">
+      <Panel
+        title="Call atmosphere"
+        description="Sounds are added only where a real call would have them."
+      >
         <div className="flex max-w-xl flex-col gap-4">
           <Switch
             label="Office background"
@@ -634,9 +843,13 @@ export function AgentEditor({
             label="Typing while using a tool"
             description="Faint keyboard sounds only while the agent looks up or saves details, so the pause sounds like someone working."
             checked={draft.atmosphere.typing_while_thinking}
-            onChange={(on) => update((d) => void (d.atmosphere.typing_while_thinking = on))}
+            onChange={(on) =>
+              update((d) => void (d.atmosphere.typing_while_thinking = on))
+            }
           />
-          <Field label={`Volume · ${Math.round(draft.atmosphere.volume * 100)}%`}>
+          <Field
+            label={`Volume · ${Math.round(draft.atmosphere.volume * 100)}%`}
+          >
             {(p) => (
               <input
                 {...p}
@@ -645,11 +858,84 @@ export function AgentEditor({
                 max={1}
                 step={0.05}
                 value={draft.atmosphere.volume}
-                onChange={(e) => update((d) => void (d.atmosphere.volume = Number(e.target.value)))}
+                onChange={(e) =>
+                  update(
+                    (d) => void (d.atmosphere.volume = Number(e.target.value)),
+                  )
+                }
                 className="h-10 accent-[var(--ink)]"
               />
             )}
           </Field>
+        </div>
+      </Panel>
+
+      <Panel title="Retry unanswered calls">
+        <div className="flex flex-col gap-4">
+          <Switch
+            label="Call again when the customer isn't reached"
+            description="No answer, busy, switched off, voicemail or nobody speaking: the agent hangs up and calls the number again later. Campaigns use their own retry settings."
+            checked={retry.enabled}
+            onChange={(enabled) =>
+              update((d) => void (d.retry = { ...retry, enabled }))
+            }
+          />
+          {retry.enabled && (
+            <div className="grid max-w-xl gap-4 sm:grid-cols-2">
+              <Field
+                label="Retries"
+                hint="Extra calls after the first, 1 to 10."
+              >
+                {(p) => (
+                  <Input
+                    {...p}
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={retry.max_retries}
+                    onChange={(e) =>
+                      update(
+                        (d) =>
+                          void (d.retry = {
+                            ...retry,
+                            max_retries: Math.min(
+                              10,
+                              Math.max(1, Number(e.target.value) || 1),
+                            ),
+                          }),
+                      )
+                    }
+                  />
+                )}
+              </Field>
+              <Field
+                label="Wait between calls (minutes)"
+                hint="5 to 1440 (a day)."
+              >
+                {(p) => (
+                  <Input
+                    {...p}
+                    type="number"
+                    min={5}
+                    max={1440}
+                    value={retry.wait_minutes}
+                    onChange={(e) =>
+                      update(
+                        (d) =>
+                          void (d.retry = {
+                            ...retry,
+                            wait_minutes: Math.min(
+                              1440,
+                              Math.max(5, Number(e.target.value) || 5),
+                            ),
+                          }),
+                      )
+                    }
+                  />
+                )}
+              </Field>
+            </div>
+          )}
         </div>
       </Panel>
 
@@ -665,13 +951,18 @@ export function AgentEditor({
                 value={Math.round(draft.limits.max_duration_seconds / 60)}
                 onChange={(e) =>
                   update(
-                    (d) => void (d.limits.max_duration_seconds = Math.max(1, Number(e.target.value)) * 60),
+                    (d) =>
+                      void (d.limits.max_duration_seconds =
+                        Math.max(1, Number(e.target.value)) * 60),
                   )
                 }
               />
             )}
           </Field>
-          <Field label="Hang up after silence (seconds)" hint="The agent checks once, then ends the call.">
+          <Field
+            label="Hang up after silence (seconds)"
+            hint="The agent checks once, then ends the call."
+          >
             {(p) => (
               <Input
                 {...p}
@@ -680,7 +971,12 @@ export function AgentEditor({
                 max={120}
                 value={draft.limits.silence_timeout_seconds}
                 onChange={(e) =>
-                  update((d) => void (d.limits.silence_timeout_seconds = Number(e.target.value)))
+                  update(
+                    (d) =>
+                      void (d.limits.silence_timeout_seconds = Number(
+                        e.target.value,
+                      )),
+                  )
                 }
               />
             )}
@@ -715,7 +1011,10 @@ function TrackedList({
         <p className="text-2xs text-muted">{hint}</p>
       </div>
       {items.map((item, i) => (
-        <div key={i} className="grid gap-2 sm:grid-cols-[220px_1fr_auto] sm:items-center">
+        <div
+          key={i}
+          className="grid gap-2 sm:grid-cols-[220px_1fr_auto] sm:items-center"
+        >
           <Input
             aria-label={`${label} ${i + 1}: name`}
             maxLength={60}

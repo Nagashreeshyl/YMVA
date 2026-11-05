@@ -21,7 +21,9 @@ from ymva.models import (
     User,
 )
 from ymva.models.user import acting_api_key
+from ymva.services.branches import BRANCH_DETAIL, find_branch
 from ymva.services.calls import (
+    BranchError,
     CallSetupError,
     DoNotCallError,
     check_capacity,
@@ -82,6 +84,8 @@ async def start_outbound_call(
     use_edits: bool = False,
     placed_by: User | None = None,
     callback_url: str | None = None,
+    retry_of: Call | None = None,
+    retries: bool = True,
 ) -> Call:
     """Create the call and ask the provider to dial. Raises CallSetupError when the call can't
     start (no published version, lines busy, number off) and TelephonyError when the provider
@@ -106,8 +110,24 @@ async def start_outbound_call(
                 "Your current edits aren't complete yet. Fix them or call with the published "
                 "version."
             ) from exc
+    variables = string_variables(variables)
+    branch = await find_branch(db, variables.get(BRANCH_DETAIL))
+    if config.branch_required and branch is None:
+        given = variables.get(BRANCH_DETAIL, "").strip()
+        raise BranchError(
+            f"{agent.name} needs the customer's branch: '{given}' isn't in Settings > Branches"
+            if given
+            else f"{agent.name} needs the customer's branch: send it as the 'branch' detail"
+        )
+    if branch is not None:
+        # The listed name, so every app's spelling ("Bengaluru") files under one branch; and
+        # the branch's state picks the opening language unless the app sent one.
+        variables[BRANCH_DETAIL] = branch.name
+        if branch.state and not variables.get("state"):
+            variables["state"] = branch.state
     await check_capacity(db)
 
+    first = retry_of.first_call_id or retry_of.id if retry_of else None
     call = Call(
         agent_id=agent.id,
         agent_name=agent.name,
@@ -118,10 +138,19 @@ async def start_outbound_call(
         phone_number_id=number.id,
         from_number=number.e164,
         to_number=to,
-        placed_by_id=placed_by.id if placed_by else None,
-        placed_by_api_key_id=acting_api_key(placed_by) if placed_by else None,
+        placed_by_id=retry_of.placed_by_id if retry_of else placed_by.id if placed_by else None,
+        placed_by_api_key_id=retry_of.placed_by_api_key_id
+        if retry_of
+        else acting_api_key(placed_by)
+        if placed_by
+        else None,
         callback_url=callback_url,
-        variables=string_variables(variables),
+        variables=variables,
+        branch=branch.name if branch else None,
+        attempt=retry_of.attempt + 1 if retry_of else 1,
+        first_call_id=first,
+        # "pending": the retry check looks at this call once it ends (services/retries.py).
+        retry_status="pending" if retries and config.retry.enabled else "none",
         # The settings this call runs with, read again by the after-call results.
         agent_config=config.model_dump(mode="json"),
     )

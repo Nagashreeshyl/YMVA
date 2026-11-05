@@ -174,8 +174,9 @@ Platform facts:
   Match the voice to the persona's name and gender.
 - Per-call details are written as {{{{name}}}} (snake_case) in the instructions, greetings and
   announcement, and every one must be listed in variables with a description and an example.
-  Two optional variables are understood by the platform: preferred_language (a language code)
-  and state (the customer's state, which picks the greeting language).
+  Optional variables the platform understands: preferred_language (a language code), state
+  (the customer's state, which picks the greeting language) and branch (the customer's branch
+  from Settings > Branches; its state picks the language and its manager takes transfers).
 - Transfer: on phone calls the agent can connect the caller to a person (a fixed number or
   the customer's branch manager, chosen in the editor) when the caller asks. Turn it on
   (transfer_enabled) whenever the admin wants calls handed to a person or manager, and say

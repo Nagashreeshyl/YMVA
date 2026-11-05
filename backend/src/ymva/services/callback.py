@@ -17,13 +17,24 @@ _running: set[asyncio.Task[None]] = set()
 
 
 def payload(call: Call) -> dict[str, Any]:
+    from ymva.services.retries import retry_setting, will_retry  # retries imports this module
+
+    retrying = will_retry(call)
     return {
         "event": "call.ended",
         "call_id": str(call.id),
         "status": call.status.value,
         "outcome": call.outcome,
         "summary": call.summary,
+        "action_items": call.action_items or [],
         "details": call.extracted or {},
+        "branch": call.branch,
+        # Attempt 1 is the first call; retries share its first_call_id. When will_retry is
+        # true another attempt follows (about retry_in_minutes later) with its own callback.
+        "attempt": call.attempt,
+        "first_call_id": str(call.first_call_id or call.id),
+        "will_retry": retrying,
+        "retry_in_minutes": retry_setting(call).wait_minutes if retrying else None,
         "agent_id": str(call.agent_id) if call.agent_id else None,
         "agent_name": call.agent_name,
         "to": call.to_number,

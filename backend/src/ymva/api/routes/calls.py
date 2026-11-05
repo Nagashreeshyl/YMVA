@@ -43,6 +43,7 @@ from ymva.models import (
 from ymva.models.user import acting_api_key
 from ymva.permissions import Perm, can
 from ymva.services import analysis, audit
+from ymva.services.branches import find_branch
 from ymva.services.builder import INTERVIEWER_NAME, interviewer
 from ymva.services.calls import (
     ACTIVE_SESSIONS,
@@ -81,6 +82,11 @@ class CallOut(BaseModel):
     summary: str | None
     cost_total: float | None  # estimated AI cost in USD
     languages: list[str]
+    branch: str | None
+    action_items: list[str]
+    # Retries: attempt 1 is the first call; every retry carries its first_call_id.
+    attempt: int
+    first_call_id: uuid.UUID
 
 
 class CallEventOut(BaseModel):
@@ -136,6 +142,10 @@ def _call_out(call: Call, agent_names: dict[uuid.UUID, str]) -> dict[str, Any]:
         "summary": call.summary,
         "cost_total": float(call.cost_total) if call.cost_total is not None else None,
         "languages": call.languages or [],
+        "branch": call.branch,
+        "action_items": call.action_items or [],
+        "attempt": call.attempt or 1,
+        "first_call_id": call.first_call_id or call.id,
     }
 
 
@@ -190,8 +200,17 @@ async def list_calls(
     direction: CallDirection | None = None,
     call_status: Annotated[CallStatus | None, Query(alias="status")] = None,
     outcome: Annotated[str | None, Query(max_length=64)] = None,
+    branch: Annotated[str | None, Query(max_length=120)] = None,
+    first_call_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
+    """Calls, newest first. `branch` accepts any listed name ("Bengaluru" finds Bangalore);
+    `first_call_id` lists every attempt of one call."""
     query = select(Call)
+    if branch:
+        listed = await find_branch(db, branch)
+        query = query.where(Call.branch == (listed.name if listed else branch.strip()))
+    if first_call_id:
+        query = query.where((Call.id == first_call_id) | (Call.first_call_id == first_call_id))
     if not can(user.role, Perm.CALLS_VIEW_ALL):
         query = query.where(_own_calls(user))
     if outcome:

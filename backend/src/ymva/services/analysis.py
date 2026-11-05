@@ -22,10 +22,12 @@ from ymva.services.builder import ask_gemini
 from ymva.services.integrations import load_ai_keys
 from ymva.services.tools import call_facts, load_tools, run_tool
 from ymva.voice.config import AgentConfig, Analysis
+from ymva.voice.voicemail import VOICEMAIL
 
 log = get_logger(__name__)
 
 NO_CONVERSATION = "No conversation"
+VOICEMAIL_OUTCOME = "Voicemail"
 ANALYSIS_ATTEMPTS = 3
 ANALYSIS_RETRY_SECS = 10.0
 OTHER = "Other"
@@ -39,6 +41,9 @@ company in India) and a customer, and write down what happened.
 - details: only details the customer actually said. Leave out anything not said; never guess.
   Write dates as YYYY-MM-DD, working out words like "tomorrow" or "the 20th" from the call
   date. Keep each value short.
+- action_items: what Yellow Metal's team must do next because of this call, each a short
+  instruction ("Call back on 2026-11-08 after 5 PM", "Branch manager to call about a
+  penalty waiver"). Empty if nothing is needed.
 - do_not_call: true only if the customer clearly asked not to be called again (for example
   "don't call me again", "stop calling me"). Being busy or asking for a later call is false."""
 
@@ -52,6 +57,7 @@ def _result_model(analysis: Analysis) -> type[BaseModel]:
     fields: dict[str, Any] = {
         "summary": (str, ...),
         "outcome": (outcomes, ...),
+        "action_items": (list[str], Field(default_factory=list)),
         "do_not_call": (bool, False),
     }
     if analysis.details:
@@ -114,6 +120,12 @@ async def analyze_call(call_id: uuid.UUID) -> None:
             f"{'Customer' if e.type == CallEventType.USER_TURN else 'Agent'}: {e.content}"
             for e in events
         ]
+        if call.end_reason == VOICEMAIL:
+            call.outcome = VOICEMAIL_OUTCOME
+            call.summary = "Reached voicemail or a network message; the agent hung up."
+            call.extracted, call.action_items = {}, []
+            await db.commit()
+            return
         if not any(line.startswith("Customer:") for line in transcript):
             call.outcome = NO_CONVERSATION
             call.summary = "The customer didn't say anything."
@@ -147,6 +159,9 @@ async def analyze_call(call_id: uuid.UUID) -> None:
         data = result.model_dump()
         call.summary = data["summary"].strip()[:2000]
         call.outcome = data["outcome"]
+        call.action_items = [a.strip()[:300] for a in data.get("action_items", []) if a.strip()][
+            :10
+        ]
         call.extracted = {
             d["name"]: d["value"].strip() for d in data.get("details", []) if d["value"].strip()
         }
@@ -179,6 +194,10 @@ def result_values(call: Call, analysis: Analysis) -> dict[str, str]:
     values |= {
         "agent_name": call.agent_name or "",
         "call_id": str(call.id),
+        "first_call_id": str(call.first_call_id or call.id),
+        "attempt": str(call.attempt),
+        "branch": call.branch or str((call.variables or {}).get("branch", "")),
+        "action_items": "; ".join(call.action_items or []),
         "duration_seconds": str(call.duration_seconds or 0),
         "outcome": call.outcome or "",
         "summary": call.summary or "",

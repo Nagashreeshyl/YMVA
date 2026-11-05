@@ -4,7 +4,17 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,6 +44,11 @@ class Call(UUIDPk, Timestamps, Base):
         UniqueConstraint("provider_account_id", "provider_call_id"),
         Index("ix_calls_agent_created", "agent_id", "created_at"),
         Index("ix_calls_created_at", "created_at"),
+        Index(
+            "ix_calls_retry_pending",
+            "retry_at",
+            postgresql_where=text("retry_status IN ('pending', 'scheduled')"),
+        ),
     )
 
     agent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agents.id", ondelete="SET NULL"))
@@ -81,6 +96,20 @@ class Call(UUIDPk, Timestamps, Base):
     summary: Mapped[str | None] = mapped_column(Text)
     extracted: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     recording_key: Mapped[str | None] = mapped_column(String(500))
+    # Follow-ups the team must do, written by the after-call analysis.
+    action_items: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    # The customer's branch as listed in Settings > Branches (from the "branch" detail).
+    branch: Mapped[str | None] = mapped_column(String(120), index=True)
+
+    # Retries of an unreached number (the agent's Retry setting): attempt 1 is the first call,
+    # and every retry points at it. retry_status: "pending" (decided once the call ends),
+    # "scheduled" (due at retry_at), "placed" (the next attempt exists) or "none".
+    attempt: Mapped[int] = mapped_column(default=1, server_default="1")
+    first_call_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("calls.id", ondelete="SET NULL"), index=True
+    )
+    retry_status: Mapped[str] = mapped_column(String(16), default="none", server_default="none")
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     cost_total: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
     cost_breakdown: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)

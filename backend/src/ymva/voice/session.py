@@ -72,6 +72,7 @@ from ymva.voice.recording import CallRecording
 from ymva.voice.sarvam_voice import SarvamVoice
 from ymva.voice.trim import LeadingSilenceTrimmer
 from ymva.voice.turns import turn_stop_strategy
+from ymva.voice.voicemail import CHECK_TURNS, VOICEMAIL, is_voicemail
 
 log = get_logger(__name__)
 
@@ -215,6 +216,7 @@ class CallSession:
         self.recording = CallRecording(setup.call_id)
         self.task: PipelineTask | None = None
         self._ended_by: str = "caller_hung_up"
+        self._user_turns = 0
         self._ending: asyncio.Task[None] | None = None
         self.conversation = ConversationState(
             setup.mixer, self._emit if setup.send_live_events else None
@@ -718,6 +720,18 @@ class CallSession:
             await self.recorder.event(
                 CallEventType.USER_TURN, message.content, language=guard.current
             )
+            self._user_turns += 1
+            if (
+                self.setup.provider_call_id is not None  # a phone line, not a browser test
+                and self._user_turns <= CHECK_TURNS
+                and is_voicemail(message.content or "")
+            ):
+                await self.recorder.event(
+                    CallEventType.STATUS, "Voicemail or a network message: hung up"
+                )
+                self._ended_by = VOICEMAIL
+                await task.queue_frame(EndWorkerFrame(reason="voicemail"))
+                return
             if self._to_live is not None and message.content:
                 await self._to_live.say(message.content)
 

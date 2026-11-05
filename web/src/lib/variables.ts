@@ -11,7 +11,8 @@ export function detectVariables(config: AgentConfig): string[] {
     ...Object.values(config.announcement.translations),
   ];
   const seen = new Set<string>();
-  for (const text of texts) for (const m of text.matchAll(VARIABLE_RE)) seen.add(m[1]);
+  for (const text of texts)
+    for (const m of text.matchAll(VARIABLE_RE)) seen.add(m[1]);
   return [...seen];
 }
 
@@ -23,13 +24,18 @@ export function variableLabel(name: string): string {
 /** Last values typed for an agent's call form, so repeat tests don't need retyping. */
 export function rememberedValues(agentId: string): Record<string, string> {
   try {
-    return JSON.parse(localStorage.getItem(`ymva:call-values:${agentId}`) ?? "{}");
+    return JSON.parse(
+      localStorage.getItem(`ymva:call-values:${agentId}`) ?? "{}",
+    );
   } catch {
     return {};
   }
 }
 
-export function rememberValues(agentId: string, values: Record<string, string>): void {
+export function rememberValues(
+  agentId: string,
+  values: Record<string, string>,
+): void {
   try {
     localStorage.setItem(`ymva:call-values:${agentId}`, JSON.stringify(values));
   } catch {
@@ -43,6 +49,12 @@ export const ROUTING_DETAILS = ["preferred_language", "state"] as const;
 /** Detected details plus the built-in ones, without duplicates. An agent that transfers to the
  * customer's branch manager also needs their branch. */
 export function callDetails(config: AgentConfig): string[] {
-  const branch = config.transfer?.enabled && config.transfer.to === "branch_manager" ? ["branch"] : [];
-  return [...new Set([...detectVariables(config), ...branch, ...ROUTING_DETAILS])];
+  const branch =
+    config.branch_required ||
+    (config.transfer?.enabled && config.transfer.to === "branch_manager")
+      ? ["branch"]
+      : [];
+  return [
+    ...new Set([...detectVariables(config), ...branch, ...ROUTING_DETAILS]),
+  ];
 }

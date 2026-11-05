@@ -40,3 +40,5 @@ class Branch(UUIDPk, Timestamps, Base):
     other_names: Mapped[list[str]] = mapped_column(JSONB, default=list)
     manager_name: Mapped[str] = mapped_column(String(120), default="")
     manager_phone: Mapped[str] = mapped_column(String(20))  # E.164
+    # Its state picks the opening language of calls for this branch (Karnataka -> Kannada).
+    state: Mapped[str] = mapped_column(String(60), default="", server_default="")

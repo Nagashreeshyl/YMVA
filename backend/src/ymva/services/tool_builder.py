@@ -76,7 +76,8 @@ during calls. Turn the admin's description into one tool.
 - For google_sheets, use the sheet link if the admin gave one (sheet_link), else leave it
   empty.
 - If the tool should run after the call to record its results (not during the call), it
-  needs no params and may use {{summary}}, {{outcome}}, {{duration_seconds}}, {{agent_name}}
+  needs no params and may use {{summary}}, {{outcome}}, {{action_items}}, {{call_id}},
+  {{first_call_id}}, {{attempt}}, {{branch}}, {{duration_seconds}}, {{agent_name}}
   and the call's details in snake_case, e.g. {{promised_payment_date}}, {{paid_on}},
   {{call_back_at}}, {{reason_for_difficulty}}.
 - description tells the agent exactly when to use the tool, in one or two sentences.

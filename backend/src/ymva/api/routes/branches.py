@@ -12,6 +12,7 @@ from ymva.api.deps import CurrentUser, DbSession, SettingsManager, client_ip
 from ymva.api.routes.numbers import normalise_e164
 from ymva.models import Branch
 from ymva.services import audit
+from ymva.voice.languages import language_for_state
 
 router = APIRouter(prefix="/branches", tags=["branches"])
 
@@ -21,6 +22,16 @@ class BranchIn(BaseModel):
     other_names: list[str] = Field(default_factory=list, max_length=20)
     manager_name: str = Field(default="", max_length=120)
     manager_phone: str
+    # Decides the opening language of this branch's calls.
+    state: str = Field(default="", max_length=60)
+
+    @field_validator("state")
+    @classmethod
+    def _state(cls, v: str) -> str:
+        v = " ".join(v.split())
+        if v and language_for_state(v) is None:
+            raise ValueError(f"Unknown state: {v}. Use its full name, e.g. Karnataka")
+        return v
 
     @field_validator("manager_phone")
     @classmethod
@@ -44,6 +55,7 @@ class BranchOut(BaseModel):
     other_names: list[str]
     manager_name: str
     manager_phone: str
+    state: str
     updated_at: datetime
 
 
@@ -54,6 +66,7 @@ def _out(b: Branch) -> BranchOut:
         other_names=b.other_names,
         manager_name=b.manager_name,
         manager_phone=b.manager_phone,
+        state=b.state,
         updated_at=b.updated_at,
     )
 

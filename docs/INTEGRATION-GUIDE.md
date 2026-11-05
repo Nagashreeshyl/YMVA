@@ -19,7 +19,7 @@ pick what it may do:
 | Access | Can |
 |---|---|
 | **Caller** (recommended) | start calls, read the calls it started, list agents and numbers |
-| **Campaign manager** | also read every call and run campaigns |
+| **Campaign manager** | also read every call and run campaigns (use this for the branch managers' app) |
 
 The key is shown **once**. Store it on your server (environment variable or secret
 store), never in a web page or mobile app, where anyone could read it. If it leaks,
@@ -132,6 +132,19 @@ The call opens in the customer's language when you send their state:
   the call opens in the agent's default language. If the customer answers in another
   language, the agent follows them.
 
+### Branch (required on some agents)
+
+An agent with **Every call must include the customer's branch** on (agent editor → Customer's
+branch) lists `branch` in its `details`, and refuses a call without one:
+
+- Send the branch as listed in **Settings → Branches** (`GET /api/branches`), e.g.
+  `"branch": "Bangalore"`. Other spellings set up there work too (`Bengaluru`).
+- A missing or unknown branch is refused with `400` before the phone rings:
+  `… needs the customer's branch: 'Mysore' isn't in Settings > Branches`.
+- The branch's **state** picks the opening language (Bangalore in Karnataka → Kannada),
+  unless you send `preferred_language` or `state` yourself.
+- The call is filed under the listed name, so `GET /api/calls?branch=Bangalore` finds it.
+
 ### Transfers to the customer's branch manager
 
 If the agent is set to transfer calls to **the customer's branch manager**, its `details`
@@ -155,6 +168,9 @@ agent's fixed transfer number.
   "details": {"Department": "Cardiology", "Preferred appointment date": "2026-11-12"},
   "agent_id": "…", "agent_name": "Hospital Appointment",
   "to": "+919845011111", "from": "+918064269915",
+  "action_items": ["Call back on 2026-11-12 if the appointment isn't confirmed"],
+  "branch": "Bangalore",
+  "attempt": 1, "first_call_id": "…", "will_retry": false, "retry_in_minutes": null,
   "duration_seconds": 95, "end_reason": "agent_ended",
   "variables": {"patient_name": "Rahul Sharma", "state": "Karnataka"},
   "started_at": "2026-11-03T10:00:05Z", "ended_at": "2026-11-03T10:01:40Z"
@@ -163,7 +179,13 @@ agent's fixed transfer number.
 
 - Answer it with any `2xx`. If your server is down, YMVA retries three times.
 - Calls nobody answered are reported too: `status` is `no_answer`, `busy` or `failed`,
-  without an outcome.
+  without an outcome. Voicemail and network messages ("switched off") end with
+  `end_reason` `voicemail` and outcome `Voicemail`.
+- **Retries.** If the agent's *Retry unanswered calls* is on, an unreached customer is
+  called again (a new call with its own `call_id`, `attempt` 2, 3…, all sharing the first
+  call's `first_call_id`). Every attempt sends its own callback; `will_retry: true` means
+  another attempt follows in about `retry_in_minutes`. The last callback of a chain has
+  `will_retry: false`. `GET /api/calls?first_call_id=…` lists every attempt.
 - The address must be reachable from the internet (YMVA won't send to private
   addresses such as `192.168.x.x` unless its admin allows it).
 
@@ -196,7 +218,29 @@ Every error is `{"detail": "a plain explanation"}`. Show or log it as is.
 | List branches and their managers | `GET /api/branches` |
 | Start a call | `POST /api/calls/outbound` |
 | A call's status and result | `GET /api/calls/{call_id}` |
-| Calls this key started | `GET /api/calls?limit=50&offset=0` |
+| Calls this key started (Caller key) or every call (Campaign manager key) | `GET /api/calls?limit=50&offset=0` |
+| One branch's calls | `GET /api/calls?branch=Bangalore` |
+| Every attempt of a retried call | `GET /api/calls?first_call_id={call_id}` |
+
+Each call in a list has `id`, `status`, `outcome`, `summary`, `action_items`, `branch`,
+`attempt`, `first_call_id`, `to_number`, `started_at`, `duration_seconds`… The list is
+newest first, 50 per page (`limit` up to 200, `offset` to page). `GET /api/calls/{id}`
+adds the transcript (`events`) and the details.
+
+## A branch managers' app
+
+The usual setup for an app that shows each branch manager their branch's calls:
+
+1. A **Campaign manager** API key, kept on the app's server.
+2. **Starting a call** from the app: `POST /api/calls/outbound` with the customer's
+   `branch` and the app's own `callback_url`; the answer's `id` is the call ID.
+3. **Results:** the callback above (summary, action items, outcome, details, attempts), or
+   `GET /api/calls/{id}`.
+4. **A manager's list:** `GET /api/calls?branch=<their branch>`.
+5. **Calls the app didn't start** (campaigns, n8n): add an after-call HTTP tool on the
+   agent (agent editor → After the call → Send the results to) pointing at the app; it can
+   send `{{call_id}}`, `{{summary}}`, `{{outcome}}`, `{{action_items}}`, `{{branch}}`,
+   `{{attempt}}`, `{{first_call_id}}` and every detail.
 
 ## Using n8n instead
 

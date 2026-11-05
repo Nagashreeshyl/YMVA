@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { History } from "lucide-react";
+import { Download, History } from "lucide-react";
 import { useState } from "react";
 import { Button, EmptyState, ErrorNotice, Skeleton } from "@/components/ui";
 import { api, type AuditLog, type Page } from "@/lib/api";
@@ -33,6 +33,14 @@ export function AuditLogList() {
   const { items, total } = logs.data;
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex justify-end">
+        <a
+          href="/api/audit-logs/export.csv"
+          className="inline-flex h-10 items-center gap-2 rounded-full border border-line px-5 text-sm font-medium hover:bg-surface"
+        >
+          <Download className="size-4" aria-hidden /> Export all (CSV)
+        </a>
+      </div>
       <ol className="divide-y divide-line rounded-xl border border-line">
         {items.map((log) => (
           <li

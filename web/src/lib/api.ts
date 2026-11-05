@@ -12,43 +12,73 @@ export class ApiError extends Error {
 function detailMessage(detail: unknown, fallback: string): string {
   if (typeof detail === "string") return detail;
   // FastAPI validation errors: [{ loc, msg }, ...]
-  if (Array.isArray(detail) && detail.length > 0 && typeof detail[0]?.msg === "string") {
-    return detail.map((d: { msg: string }) => d.msg.replace(/^Value error, /, "")).join(". ");
+  if (
+    Array.isArray(detail) &&
+    detail.length > 0 &&
+    typeof detail[0]?.msg === "string"
+  ) {
+    return detail
+      .map((d: { msg: string }) => d.msg.replace(/^Value error, /, ""))
+      .join(". ");
   }
   return fallback;
 }
 
-export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
+export async function api<T>(
+  path: string,
+  init: RequestInit & { json?: unknown } = {},
+): Promise<T> {
   const { json, headers, ...rest } = init;
   let response: Response;
   try {
     response = await fetch(`/api${path}`, {
       credentials: "same-origin",
       ...rest,
-      headers: { ...(json !== undefined ? { "content-type": "application/json" } : {}), ...headers },
+      headers: {
+        ...(json !== undefined ? { "content-type": "application/json" } : {}),
+        ...headers,
+      },
       body: json !== undefined ? JSON.stringify(json) : rest.body,
     });
   } catch {
-    throw new ApiError(0, "Can't reach the YMVA server. Check your connection and try again.");
+    throw new ApiError(
+      0,
+      "Can't reach the YMVA server. Check your connection and try again.",
+    );
   }
-  if (response.status === 401 && path !== "/auth/login" && typeof window !== "undefined") {
+  if (
+    response.status === 401 &&
+    path !== "/auth/login" &&
+    typeof window !== "undefined"
+  ) {
     // Session expired or revoked: clear the stale cookie so the sign-in page doesn't bounce back.
-    await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
+    await fetch("/api/auth/logout", {
+      method: "POST",
+      credentials: "same-origin",
+    }).catch(() => {});
     // Full reload on purpose: drops every cached query from the old session.
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-    window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname)}`);
+    window.location.assign(
+      `/login?next=${encodeURIComponent(window.location.pathname)}`,
+    );
   }
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new ApiError(
       response.status,
-      detailMessage(body?.detail, `Request failed (${response.status}). Please try again.`),
+      detailMessage(
+        body?.detail,
+        `Request failed (${response.status}). Please try again.`,
+      ),
     );
   }
-  return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
+  return response.status === 204
+    ? (undefined as T)
+    : ((await response.json()) as T);
 }
 
-export type Role = "owner" | "admin" | "campaign_manager" | "caller" | "reviewer" | "viewer";
+export type Role =
+  "owner" | "admin" | "campaign_manager" | "caller" | "reviewer" | "viewer";
 
 export interface User {
   id: string;
@@ -130,7 +160,13 @@ export interface TelephonyProviderInfo {
   id: string;
   name: string;
   /** The boxes to fill in when connecting an account. */
-  fields: { key: string; label: string; secret: boolean; hint: string; multiline: boolean }[];
+  fields: {
+    key: string;
+    label: string;
+    secret: boolean;
+    hint: string;
+    multiline: boolean;
+  }[];
   /** How to point the provider's numbers at YMVA. */
   setup: string;
 }
@@ -173,10 +209,23 @@ export interface AgentConfig {
   /** Missing on agents saved before the setting existed: they follow the caller. */
   follow_caller_language?: boolean;
   state_languages: Record<string, string>;
-  announcement: { enabled: boolean; text: string; translations: Record<string, string> };
+  announcement: {
+    enabled: boolean;
+    text: string;
+    translations: Record<string, string>;
+  };
   /** Hand the call to a person when the caller asks (phone calls only): this number, or the
    * manager of the customer's branch (their "branch" detail; `phone` then covers unlisted ones). */
-  transfer?: { enabled: boolean; to?: "number" | "branch_manager"; phone: string; when: string };
+  transfer?: {
+    enabled: boolean;
+    to?: "number" | "branch_manager";
+    phone: string;
+    when: string;
+  };
+  /** On: every phone call must send a "branch" listed in Settings > Branches. */
+  branch_required?: boolean;
+  /** Call an unreached number again (no answer, busy, voicemail). Campaigns use their own. */
+  retry?: { enabled: boolean; max_retries: number; wait_minutes: number };
   /** Optional notes for {{names}} used in the text; values are given when calling. */
   variables: AgentVariable[];
   pipeline: {
@@ -191,9 +240,17 @@ export interface AgentConfig {
   };
   gemini_live: { model: string; voice: string; temperature: number };
   limits: { max_duration_seconds: number; silence_timeout_seconds: number };
-  atmosphere: { room_tone: boolean; typing_while_thinking: boolean; volume: number };
+  atmosphere: {
+    room_tone: boolean;
+    typing_while_thinking: boolean;
+    volume: number;
+  };
   /** Written down after each call: one outcome and any of these details the customer gave. */
-  analysis: { outcomes: TrackedItem[]; details: TrackedItem[]; send_to: string[] };
+  analysis: {
+    outcomes: TrackedItem[];
+    details: TrackedItem[];
+    send_to: string[];
+  };
   /** Names of tools from the Tools page the agent may use during calls. */
   tools: string[];
 }
@@ -307,7 +364,8 @@ export interface ToolDef {
   name: string;
   description: string;
   type: ToolType;
-  config: SheetsToolConfig | HttpToolConfig | DatabaseToolConfig | McpToolConfig;
+  config:
+    SheetsToolConfig | HttpToolConfig | DatabaseToolConfig | McpToolConfig;
   params: ToolParam[];
   has_secrets: boolean;
   /** The service account's email (share the sheet with it) or the secret header names. */
@@ -351,7 +409,14 @@ export interface CallSummary {
 export interface CallEvent {
   seq: number;
   at: string;
-  type: "user_turn" | "agent_turn" | "tool_call" | "tool_result" | "language_switch" | "status" | "error";
+  type:
+    | "user_turn"
+    | "agent_turn"
+    | "tool_call"
+    | "tool_result"
+    | "language_switch"
+    | "status"
+    | "error";
   language: string | null;
   content: string;
   data: Record<string, unknown>;
@@ -365,7 +430,10 @@ export interface CallDetail extends CallSummary {
   variables: Record<string, string>;
   extracted: Record<string, string>;
   latency: Record<string, LatencySummary>;
-  cost_breakdown: { usage?: Record<string, number>; cost_usd?: Record<string, number> };
+  cost_breakdown: {
+    usage?: Record<string, number>;
+    cost_usd?: Record<string, number>;
+  };
   error: string | null;
   events: CallEvent[];
 }
@@ -428,5 +496,7 @@ export interface Branch {
   other_names: string[];
   manager_name: string;
   manager_phone: string;
+  /** Picks the opening language of this branch's calls (Karnataka -> Kannada). */
+  state: string;
   updated_at: string;
 }
