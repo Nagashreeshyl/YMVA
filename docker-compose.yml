@@ -94,6 +94,7 @@ services:
       # The n8n node is built into the web image and served at /downloads (see web/Dockerfile).
       additional_contexts:
         n8n-src: ./integrations/n8n-nodes-ymva
+        docs: ./docs
     environment:
       NODE_ENV: production
     depends_on:

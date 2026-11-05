@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 export function proxy(request: NextRequest) {
   const signedIn = request.cookies.has("ymva_session");
   const { pathname, search } = request.nextUrl;
+  if (pathname === "/integration") return NextResponse.next(); // public API guide
   if (pathname === "/login") {
     return signedIn ? NextResponse.redirect(new URL("/", request.url)) : NextResponse.next();
   }

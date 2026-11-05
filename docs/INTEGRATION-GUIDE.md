@@ -5,9 +5,9 @@ phone a customer with one of its AI agents, and get the result back when the cal
 
 You need three things: **YMVA's address**, an **API key**, and the **agent's ID**.
 
-- YMVA's address is where the dashboard is opened, e.g. `https://voice.yellowmetal.co`
-  (today: `https://nonnasally-uncavalier-deadra.ngrok-free.dev`). Below it's written
-  `https://YMVA`.
+- YMVA's address is where the dashboard is opened: today
+  `https://ymva.srv1874203.hstgr.cloud`. Below it's written `https://YMVA`; replace it
+  with that address. This guide is always at `https://YMVA/integration`.
 - Every request carries the key in a header: `Authorization: Bearer ymva_…`
 - Requests and answers are JSON.
 

@@ -10,6 +10,8 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1 NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# The public API guide (/integration) is rendered from docs/ at build time.
+COPY --from=docs INTEGRATION-GUIDE.md /docs/INTEGRATION-GUIDE.md
 RUN npm run build
 
 # YMVA's n8n node, served at /downloads/n8n-nodes-ymva.tgz so n8n can install it in one line.
