@@ -50,6 +50,26 @@ def reached(call: Call, now: datetime) -> bool | None:
     return call.outcome != NO_CONVERSATION
 
 
+def connected_at(call: Call) -> datetime | None:
+    """When the customer was reached on this call (the call's start), None if they weren't."""
+    if call.status != CallStatus.COMPLETED or reached(call, datetime.now(UTC)) is not True:
+        return None
+    return call.started_at
+
+
+_NOT_REACHED_SUMMARY = {
+    CallStatus.NO_ANSWER: "Customer not reached: no answer.",
+    CallStatus.BUSY: "Customer not reached: the line was busy.",
+    CallStatus.FAILED: "Customer not reached: the call could not be connected.",
+    CallStatus.CANCELED: "The call was hung up before it finished.",
+}
+
+
+def summary(call: Call) -> str:
+    """The call's summary, or why there is none, so apps always get one."""
+    return call.summary or _NOT_REACHED_SUMMARY.get(call.status, "")
+
+
 def will_retry(call: Call, now: datetime | None = None) -> bool:
     """True when this call ended unreached and the agent has retries left for it."""
     setting = retry_setting(call)

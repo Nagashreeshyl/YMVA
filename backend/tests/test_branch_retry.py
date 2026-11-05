@@ -218,3 +218,31 @@ async def test_export_needs_audit_access(admin_client: httpx.AsyncClient) -> Non
         "/api/auth/login", json={"email": "rm@yellowmetal.co", "password": "viewer-password-1"}
     )
     assert (await admin_client.get("/api/audit-logs/export.csv")).status_code == 403
+
+
+async def test_calls_have_a_running_number_and_the_required_results(
+    admin_client: httpx.AsyncClient,
+) -> None:
+    setup = await _setup(admin_client)
+    a = (await admin_client.post("/api/calls/outbound", json=_call(setup))).json()
+    b = (await admin_client.post("/api/calls/outbound", json=_call(setup))).json()
+    assert b["number"] == a["number"] + 1
+    assert b["ref"] == f"#{b['number']:05d}" and len(b["ref"]) == 6
+    for query in (b["ref"], str(b["number"])):
+        found = (await admin_client.get("/api/calls", params={"number": query})).json()
+        assert [c["id"] for c in found["items"]] == [b["id"]]
+
+    # Unreached: still a summary, no connected time. Reached: connected time is the call's start.
+    await _end(a["id"], CallStatus.NO_ANSWER)
+    started = datetime.now(UTC) - timedelta(minutes=2)
+    await _end(b["id"], CallStatus.COMPLETED, started_at=started, outcome="Promised to pay",
+               summary="Ravi will pay on Friday.", action_items=["Call back Friday"])  # fmt: skip
+    async with get_sessionmaker()() as db:
+        missed = callback.payload(await db.get(Call, uuid.UUID(a["id"])))  # type: ignore[arg-type]
+        done = callback.payload(await db.get(Call, uuid.UUID(b["id"])))  # type: ignore[arg-type]
+    assert missed["summary"] and missed["connected_at"] is None and missed["attempts"] == 1
+    assert done["call_ref"] == b["ref"] and done["summary"] == "Ravi will pay on Friday."
+    assert done["action_items"] == ["Call back Friday"] and done["attempts"] == 1
+    assert done["connected_at"] == started.isoformat()
+    detail = (await admin_client.get(f"/api/calls/{b['id']}")).json()
+    assert detail["connected_at"] and detail["ref"] == b["ref"]

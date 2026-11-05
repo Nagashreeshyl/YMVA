@@ -388,6 +388,9 @@ export interface AgentOptions {
 
 export interface CallSummary {
   id: string;
+  /** Running call number; ref is how people see it: "#00042". */
+  number: number;
+  ref: string;
   created_at: string;
   direction: "inbound" | "outbound" | "web";
   status: string;
@@ -401,6 +404,12 @@ export interface CallSummary {
   end_reason: string | null;
   outcome: string | null;
   summary: string | null;
+  /** When the customer was reached; null when they weren't. */
+  connected_at: string | null;
+  branch: string | null;
+  action_items: string[];
+  attempt: number;
+  first_call_id: string;
   /** Estimated AI cost in USD (phone charges not included). */
   cost_total: number | null;
   languages: string[];

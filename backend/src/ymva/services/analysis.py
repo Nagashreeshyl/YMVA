@@ -16,7 +16,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ymva.config import get_settings
 from ymva.db import get_sessionmaker
 from ymva.logging import get_logger
-from ymva.models import AgentVersion, Call, CallDirection, CallEvent, CallEventType, DoNotCall
+from ymva.models import (
+    AgentVersion,
+    Call,
+    CallDirection,
+    CallEvent,
+    CallEventType,
+    DoNotCall,
+    call_ref,
+)
 from ymva.services import callback
 from ymva.services.builder import ask_gemini
 from ymva.services.integrations import load_ai_keys
@@ -194,6 +202,7 @@ def result_values(call: Call, analysis: Analysis) -> dict[str, str]:
     values |= {
         "agent_name": call.agent_name or "",
         "call_id": str(call.id),
+        "call_ref": call_ref(call.number),
         "first_call_id": str(call.first_call_id or call.id),
         "attempt": str(call.attempt),
         "branch": call.branch or str((call.variables or {}).get("branch", "")),

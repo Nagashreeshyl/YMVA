@@ -722,7 +722,7 @@ export function AgentEditor({
               <p className="text-2xs text-muted">
                 After each call, these tools get the results. They can use{" "}
                 {"{{summary}}"}, {"{{outcome}}"}, {"{{action_items}}"},{" "}
-                {"{{call_id}}"}, {"{{attempt}}"}, {"{{branch}}"},{" "}
+                {"{{call_id}}"}, {"{{call_ref}}"}, {"{{attempt}}"}, {"{{branch}}"},{" "}
                 {"{{duration_seconds}}"}, {"{{call_time}}"}, the customer
                 details and each detail above
                 {draft.analysis.details.length > 0 &&

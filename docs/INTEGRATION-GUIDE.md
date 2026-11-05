@@ -161,7 +161,7 @@ agent's fixed transfer number.
 ```json
 {
   "event": "call.ended",
-  "call_id": "…",
+  "call_id": "…", "call_number": 42, "call_ref": "#00042",
   "status": "completed",
   "outcome": "Appointment booked",
   "summary": "Rahul booked a cardiology appointment for 12 Nov at 10 AM.",
@@ -170,13 +170,20 @@ agent's fixed transfer number.
   "to": "+919845011111", "from": "+918064269915",
   "action_items": ["Call back on 2026-11-12 if the appointment isn't confirmed"],
   "branch": "Bangalore",
-  "attempt": 1, "first_call_id": "…", "will_retry": false, "retry_in_minutes": null,
+  "attempt": 1, "attempts": 1, "connected_at": "2026-11-03T10:00:05Z",
+  "first_call_id": "…", "will_retry": false, "retry_in_minutes": null,
   "duration_seconds": 95, "end_reason": "agent_ended",
   "variables": {"patient_name": "Rahul Sharma", "state": "Karnataka"},
   "started_at": "2026-11-03T10:00:05Z", "ended_at": "2026-11-03T10:01:40Z"
 }
 ```
 
+- Always present: `summary` (for an unreached call it says why, e.g. "Customer not
+  reached: no answer."), `action_items` (a list, maybe empty), `attempts` (calls made to
+  this customer so far, this one included) and `connected_at` (when the customer was
+  reached; `null` when they weren't).
+- `call_id` is the unique id for the API; `call_ref` (`#00042`) is the same call's short
+  running number for people. `GET /api/calls?number=00042` finds it.
 - Answer it with any `2xx`. If your server is down, YMVA retries three times.
 - Calls nobody answered are reported too: `status` is `no_answer`, `busy` or `failed`,
   without an outcome. Voicemail and network messages ("switched off") end with
@@ -221,8 +228,9 @@ Every error is `{"detail": "a plain explanation"}`. Show or log it as is.
 | Calls this key started (Caller key) or every call (Campaign manager key) | `GET /api/calls?limit=50&offset=0` |
 | One branch's calls | `GET /api/calls?branch=Bangalore` |
 | Every attempt of a retried call | `GET /api/calls?first_call_id={call_id}` |
+| One call by its number | `GET /api/calls?number=00042` |
 
-Each call in a list has `id`, `status`, `outcome`, `summary`, `action_items`, `branch`,
+Each call in a list has `id`, `number`, `ref` (`#00042`), `status`, `connected_at`, `outcome`, `summary`, `action_items`, `branch`,
 `attempt`, `first_call_id`, `to_number`, `started_at`, `duration_seconds`… The list is
 newest first, 50 per page (`limit` up to 200, `offset` to page). `GET /api/calls/{id}`
 adds the transcript (`events`) and the details.
@@ -239,7 +247,7 @@ The usual setup for an app that shows each branch manager their branch's calls:
 4. **A manager's list:** `GET /api/calls?branch=<their branch>`.
 5. **Calls the app didn't start** (campaigns, n8n): add an after-call HTTP tool on the
    agent (agent editor → After the call → Send the results to) pointing at the app; it can
-   send `{{call_id}}`, `{{summary}}`, `{{outcome}}`, `{{action_items}}`, `{{branch}}`,
+   send `{{call_id}}`, `{{call_ref}}`, `{{summary}}`, `{{outcome}}`, `{{action_items}}`, `{{branch}}`,
    `{{attempt}}`, `{{first_call_id}}` and every detail.
 
 ## Using n8n instead

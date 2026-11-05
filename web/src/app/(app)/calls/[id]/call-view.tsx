@@ -132,6 +132,8 @@ export function CallView() {
             <CallStatusBadge status={c.status} />
           </div>
           <p className="mt-1 flex flex-wrap items-center gap-x-2 text-muted">
+            <span className="tabular font-medium text-ink">{c.ref}</span>
+            <span>·</span>
             <DirectionLabel direction={c.direction} />
             <span>· {formatDateTime(c.created_at)}</span>
             {c.agent_name && !can(me, "agents.view") && <span>· {c.agent_name}</span>}

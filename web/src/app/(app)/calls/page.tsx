@@ -94,6 +94,8 @@ function CallsList() {
                           : c.to_number}
                     </span>
                     <span className="flex flex-wrap items-center gap-x-2 text-[13px] text-muted">
+                      <span className="tabular font-medium text-ink">{c.ref}</span>
+                      <span>·</span>
                       <DirectionLabel direction={c.direction} />
                       {c.agent_name && <span>· {c.agent_name}</span>}
                       {c.languages.length > 0 && (

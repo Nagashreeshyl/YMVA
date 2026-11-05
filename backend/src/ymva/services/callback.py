@@ -9,7 +9,7 @@ import httpx
 
 from ymva.db import get_sessionmaker
 from ymva.logging import get_logger
-from ymva.models import Call
+from ymva.models import Call, call_ref
 from ymva.services.egress import EVENT_HOOKS, guarded_transport
 
 log = get_logger(__name__)
@@ -17,24 +17,30 @@ _running: set[asyncio.Task[None]] = set()
 
 
 def payload(call: Call) -> dict[str, Any]:
-    from ymva.services.retries import retry_setting, will_retry  # retries imports this module
+    from ymva.services import retries  # retries imports this module
 
-    retrying = will_retry(call)
+    retrying = retries.will_retry(call)
+    connected = retries.connected_at(call)
     return {
         "event": "call.ended",
         "call_id": str(call.id),
+        "call_number": call.number,
+        "call_ref": call_ref(call.number),
         "status": call.status.value,
         "outcome": call.outcome,
-        "summary": call.summary,
+        "summary": retries.summary(call),
         "action_items": call.action_items or [],
         "details": call.extracted or {},
         "branch": call.branch,
         # Attempt 1 is the first call; retries share its first_call_id. When will_retry is
         # true another attempt follows (about retry_in_minutes later) with its own callback.
         "attempt": call.attempt,
+        "attempts": call.attempt,  # calls made to this customer so far, this one included
+        # When the customer was reached (this call's start); null when they weren't.
+        "connected_at": connected.isoformat() if connected else None,
         "first_call_id": str(call.first_call_id or call.id),
         "will_retry": retrying,
-        "retry_in_minutes": retry_setting(call).wait_minutes if retrying else None,
+        "retry_in_minutes": retries.retry_setting(call).wait_minutes if retrying else None,
         "agent_id": str(call.agent_id) if call.agent_id else None,
         "agent_name": call.agent_name,
         "to": call.to_number,

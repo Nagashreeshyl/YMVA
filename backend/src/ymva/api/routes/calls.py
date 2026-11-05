@@ -39,10 +39,11 @@ from ymva.models import (
     ProviderAccount,
     TelephonyProvider,
     User,
+    call_ref,
 )
 from ymva.models.user import acting_api_key
 from ymva.permissions import Perm, can
-from ymva.services import analysis, audit
+from ymva.services import analysis, audit, retries
 from ymva.services.branches import find_branch
 from ymva.services.builder import INTERVIEWER_NAME, interviewer
 from ymva.services.calls import (
@@ -67,6 +68,8 @@ log = get_logger(__name__)
 
 class CallOut(BaseModel):
     id: uuid.UUID
+    number: int  # running call number; ref is how people see it: "#00042"
+    ref: str
     created_at: datetime
     direction: CallDirection
     status: CallStatus
@@ -80,6 +83,7 @@ class CallOut(BaseModel):
     end_reason: str | None
     outcome: str | None
     summary: str | None
+    connected_at: datetime | None  # when the customer was reached; None if not
     cost_total: float | None  # estimated AI cost in USD
     languages: list[str]
     branch: str | None
@@ -126,6 +130,8 @@ class OutboundIn(BaseModel):
 def _call_out(call: Call, agent_names: dict[uuid.UUID, str]) -> dict[str, Any]:
     return {
         "id": call.id,
+        "number": call.number,
+        "ref": call_ref(call.number),
         "created_at": call.created_at,
         "direction": call.direction,
         "status": call.status,
@@ -139,7 +145,8 @@ def _call_out(call: Call, agent_names: dict[uuid.UUID, str]) -> dict[str, Any]:
         "duration_seconds": call.duration_seconds,
         "end_reason": call.end_reason,
         "outcome": call.outcome,
-        "summary": call.summary,
+        "summary": retries.summary(call),
+        "connected_at": retries.connected_at(call),
         "cost_total": float(call.cost_total) if call.cost_total is not None else None,
         "languages": call.languages or [],
         "branch": call.branch,
@@ -202,10 +209,13 @@ async def list_calls(
     outcome: Annotated[str | None, Query(max_length=64)] = None,
     branch: Annotated[str | None, Query(max_length=120)] = None,
     first_call_id: uuid.UUID | None = None,
+    number: Annotated[str | None, Query(max_length=20, pattern=r"^#?\d+$")] = None,
 ) -> dict[str, Any]:
     """Calls, newest first. `branch` accepts any listed name ("Bengaluru" finds Bangalore);
-    `first_call_id` lists every attempt of one call."""
+    `first_call_id` lists every attempt of one call; `number` finds one call ("#00042" or 42)."""
     query = select(Call)
+    if number:
+        query = query.where(Call.number == int(number.lstrip("#")))
     if branch:
         listed = await find_branch(db, branch)
         query = query.where(Call.branch == (listed.name if listed else branch.strip()))

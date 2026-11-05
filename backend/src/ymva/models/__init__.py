@@ -1,7 +1,7 @@
 from ymva.models.agent import Agent, AgentAssistantMessage, AgentStatus, AgentVersion
 from ymva.models.audit import AuditLog
 from ymva.models.base import Base
-from ymva.models.call import Call, CallDirection, CallEvent, CallEventType, CallStatus
+from ymva.models.call import Call, CallDirection, CallEvent, CallEventType, CallStatus, call_ref
 from ymva.models.campaign import Campaign, CampaignContact, CampaignStatus, ContactStatus
 from ymva.models.integration import AICredential, AIProvider
 from ymva.models.setting import AppSetting, Branch, DoNotCall
@@ -39,4 +39,5 @@ __all__ = [
     "ToolType",
     "User",
     "UserSession",
+    "call_ref",
 ]

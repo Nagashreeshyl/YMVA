@@ -5,8 +5,10 @@ from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     DateTime,
     ForeignKey,
+    Identity,
     Index,
     Numeric,
     String,
@@ -51,6 +53,8 @@ class Call(UUIDPk, Timestamps, Base):
         ),
     )
 
+    # A short running number people can say and search for ("#00042"); id stays the API key.
+    number: Mapped[int] = mapped_column(BigInteger, Identity(), unique=True)
     agent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agents.id", ondelete="SET NULL"))
     # Kept so call history still names the agent after it is deleted.
     agent_name: Mapped[str | None] = mapped_column(String(120))
@@ -140,3 +144,8 @@ class CallEvent(UUIDPk, Base):
     language: Mapped[str | None] = mapped_column(String(16))
     content: Mapped[str] = mapped_column(Text, default="")
     data: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+
+
+def call_ref(number: int | None) -> str:
+    """How a call is named to people: #00042."""
+    return f"#{number:05d}" if number else ""
